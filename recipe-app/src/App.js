@@ -1,25 +1,35 @@
-import logo from './logo.svg';
-import './App.css';
+import { BrowserRouter as Router, Routes, Route, NavLink } from "react-router-dom";
+import "./App.css";
+import Home from "./pages/home";
+import Pantry from "./pages/pantry";
+import Search from "./pages/search";
 
-function App() {
+function Header() {
   return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
-        </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
+    <header className="tm-header">
+      <div className="tm-header-inner">
+        <div className="tm-brand">Insert project name</div>
+        <nav className="tm-nav">
+          <NavLink to="/" end className="tm-tab">Home</NavLink>
+          <NavLink to="/pantry" className="tm-tab">Your pantry</NavLink>
+          <NavLink to="/search" className="tm-tab">Search</NavLink>
+        </nav>
+      </div>
+    </header>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <Router>
+      <div className="tm-app">
+        <Header />
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/pantry" element={<Pantry />} />
+          <Route path="/search" element={<Search />} />
+        </Routes>
+      </div>
+    </Router>
+  );
+}
