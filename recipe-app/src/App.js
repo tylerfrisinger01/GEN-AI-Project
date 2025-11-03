@@ -1,5 +1,5 @@
 import { BrowserRouter as Router, Routes, Route, NavLink } from "react-router-dom";
-import "./App.css";
+import "./css/App.css";
 import Home from "./pages/home";
 import Pantry from "./pages/pantry";
 import Search from "./pages/search";
