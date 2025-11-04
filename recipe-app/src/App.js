@@ -3,16 +3,18 @@ import "./css/App.css";
 import Home from "./pages/home";
 import Pantry from "./pages/pantry";
 import Search from "./pages/search";
+import Identify from "./pages/identify";
 
 function Header() {
   return (
     <header className="tm-header">
       <div className="tm-header-inner">
-        <div className="tm-brand">Insert project name</div>
+        <div className="tm-brand">PantryPilot</div>
         <nav className="tm-nav">
           <NavLink to="/" end className="tm-tab">Home</NavLink>
           <NavLink to="/pantry" className="tm-tab">Your pantry</NavLink>
           <NavLink to="/search" className="tm-tab">Search</NavLink>
+          <NavLink to="/identify" className="tm-tab">Identify</NavLink>
         </nav>
       </div>
     </header>
@@ -28,6 +30,7 @@ export default function App() {
           <Route path="/" element={<Home />} />
           <Route path="/pantry" element={<Pantry />} />
           <Route path="/search" element={<Search />} />
+          <Route path="/identify" element={<Identify />} />
         </Routes>
       </div>
     </Router>
