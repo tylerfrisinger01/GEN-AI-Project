@@ -1,102 +1,311 @@
-import React, { useState, useRef } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import "../css/pantry.css";
 
-export default function Pantry({
-  placeholder = "No items in pantry yet",
-  initial = [],
-  onChange = () => {},
-}) {
+const CATEGORIES = ["all", "produce", "dairy", "protein", "grain", "condiment", "snack","drink", "other"];
 
-    const [items, setItems] = useState(initial);
-    const [value, setValue] = useState("");
-    const [searchValue, setSearchValue] = useState("");
-    const inputRef = useRef(null);
+function uid() {
+  return Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
 
-    function addItem(text) {
-      const trimmed = String(text).trim();
-      if (!trimmed) return;
-      if (items.includes(trimmed)){
-        setValue("");
-        return;
+const EMOJI_MAP = {
+  milk: "🥛",
+  egg: "🥚",
+  eggs: "🥚",
+  bread: "🍞",
+  rice: "🍚",
+  pasta: "🍝",
+  apple: "🍎",
+  banana: "🍌",
+  onion: "🧅",
+  garlic: "🧄",
+  tomato: "🍅",
+  potato: "🥔",
+  chicken: "🍗",
+  beef: "🥩",
+  pork: "🐖", 
+  lamb: "🐑", 
+  salad: "🥗",
+  goat: "🐐",
+  turkey: "🦃",
+  duck: "🦆",
+  fish: "🐠",
+  tuna: "🐟",
+  lobster: "🦞",
+  crab: "🦀",
+  squid: "🦑",
+  octopus: "🐙",
+  cheese: "🧀",
+  lettuce: "🥬",
+  carrot: "🥕",
+  oil: "🫒",
+  salt: "🧂",
+  pepper: "🫙",
+  sugar: "🧂",
+  orange: "🍊",
+  kiwi: "🥝",
+  grapes: "🍇",
+  strawberry: "🍓",
+  blueberry: "🫐",
+  watermelon: "🍉",
+  pineapple: "🍍",
+  cherries: "🍒",
+  peas: "🫛", 
+  beans: "🫘",
+  broccoli: "🥦",
+  eggplant: "🍆",
+  cucumber: "🥒",
+  pepperoni: "🍕",
+  bagel: "🥯",
+  waffles: "🧇",
+  bacon: "🥓",
+  tacos: "🌮",
+  butter: "🧈",
+  "tomato sauce": "🥫",
+  shrimp: "🍤", 
+  beer: "🍺",
+  wine: "🍷",
+  juice: "🧃",
+  peanuts: "🥜",
+  coffee: "☕",
+  tea: "🍵",
+  donut: "🍩",
+  cookie: "🍪",
+  cake: "🍰",
+  "ice cream": "🍨",
+  candy: "🍬",
+  soup: "🍜",
+  "red pepper": "🌶",
+  "green pepper": "🫑",
+  pop: "🥤", 
+  soda: "🥤",
+  cereal: "🥣",
+};
+
+function inferCategory(name) {
+  const n = name.toLowerCase();
+  if (/(apple|banana|lettuce|spinach|tomato|onion|garlic|carrot|potato"|peas|broccoli|eggplant|cucumber|red pepper|green pepper)/.test(n)) return "produce";
+  if (/(milk|cheese|yogurt|butter|cream|ice cream|sour cream|margarine|mayonnaise)/.test(n)) return "dairy";
+  if (/(chicken|beef|pork|fish|tofu|egg|eggs|duck|turkey|lamb|goat|tuna|lobster|crab|octopus|squid)/.test(n)) return "protein";
+  if (/(rice|pasta|bread|tortilla|oat|cereal|flour)/.test(n)) return "grain";
+  if (/(salt|pepper|sauce|ketchup|mustard|mayo|oil|vinegar|soy|sugar|tomatoe sauce)/.test(n)) return "condiment";
+  if (/(chips|cookie|chocolate|candy|cracker|snack|popcorn|salsa|cake|donut)/.test(n)) return "snack";
+  if (/(wine|beer|soda|juice|pop|milk)/.test(n)) return "drink";
+  return "other";
+}
+
+function emojiFor(name) {
+  const key = name.trim().toLowerCase();
+
+  if (EMOJI_MAP[key]) return EMOJI_MAP[key];
+
+  const match = Object.keys(EMOJI_MAP).find(k =>
+    key.includes(k)
+  );
+  if (match) return EMOJI_MAP[match];
+
+  return "🧺";
+}
+
+function parseQuickAdd(input) {
+  const raw = input.trim();
+  if (!raw) return null;
+  const xForm = raw.replace(/\bx\s*(\d+(?:\.\d+)?)\b/i, "$1");
+  const tokens = xForm.split(/\s+/);
+
+  let qty;
+  let unit;
+  let nameTokens = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    const num = Number(t);
+    if (!isNaN(num) && qty === undefined) {
+      qty = num;
+      const maybeUnit = tokens[i + 1];
+      if (maybeUnit && /^(g|kg|ml|l|lb|oz|cup|cups|tbsp|tsp|pc|pcs|ct)$/i.test(maybeUnit)) {
+        unit = maybeUnit;
+        i++;
       }
-      const next = [...items, trimmed];
-      setItems(next);
-      onChange(next);
-      setValue("");
+    } else {
+      nameTokens.push(t);
+    }
+  }
+
+  const name = nameTokens.join(" ").trim();
+  if (!name) return { name: raw };
+  return { name, qty, unit };
+}
+
+export default function PantryPro({ placeholder = "No items in pantry yet", initial = [], onChange = () => {} }) {
+  const inputRef = useRef(null);
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("all");
+  const [sort, setSort] = useState("recent");
+  const [items, setItems] = useState(() => {
+    const cached = localStorage.getItem("pantry-items");
+    if (cached) {
+      try { return JSON.parse(cached); } catch {}
+    }
+    if (Array.isArray(initial) && typeof initial[0] === "string") {
+      return initial.map((name) => ({ id: uid(), name, qty: 1, category: inferCategory(name) }));
+    }
+    return Array.isArray(initial) ? initial : [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem("pantry-items", JSON.stringify(items));
+    onChange(items);
+  }, [items]);
+
+  function addItem(raw) {
+    const parsed = parseQuickAdd(raw);
+    if (!parsed || !parsed.name) return;
+
+    const name = parsed.name.trim();
+    if (items.some((it) => it.name.toLowerCase() === name.toLowerCase())) {
       inputRef.current?.focus();
+      return;
     }
 
-    function removeItem(index) {
-      const next = items.filter((_, i) => i !== index);
-      setItems(next);
-      onChange(next);
-      inputRef.current?.focus();
-    }
+    const next = {
+      id: uid(),
+      name,
+      qty: parsed.qty ?? 1,
+      unit: parsed.unit,
+      category: inferCategory(name),
+    };
+    setItems((prev) => [next, ...prev]);
+    if (inputRef.current) inputRef.current.value = "";
+    inputRef.current?.focus();
+  }
 
-    function handleKeyDown(e) {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        addItem(value);
-      }
-    }
+  function removeItem(id) {
+    setItems((prev) => prev.filter((it) => it.id !== id));
+  }
+
+  function updateQty(id, delta) {
+    setItems((prev) => prev.map((it) => it.id === id ? { ...it, qty: Math.max(0, (it.qty ?? 1) + delta) } : it));
+  }
+
+  function setCustomImg(id) {
+    const url = prompt("Paste an image URL for this item (https://...)")?.trim();
+    if (!url) return;
+    setItems((prev) => prev.map((it) => it.id === id ? { ...it, imgUrl: url } : it));
+  }
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let list = items.filter((it) =>
+      (category === "all" || it.category === category) &&
+      (q === "" || it.name.toLowerCase().includes(q))
+    );
+
+    if (sort === "az") list.sort((a, b) => a.name.localeCompare(b.name));
+    else if (sort === "za") list.sort((a, b) => b.name.localeCompare(a.name));
+
+    return list;
+  }, [items, search, category, sort]);
 
   return (
-    <div className="pantry-container">
-      <h1>Pantry</h1>
-
-      <input
-        className="pantry-search"
-        placeholder="Start typing to search"
-        type="text"
-        value={searchValue}
-        onChange={(e) => setSearchValue(e.target.value)}
-      />
-
-      <div className="pantry-box">
-        <div className="pantry-list">
-          {items.length === 0 ? (
-            <div>{placeholder}</div>
-          ) : (
-            (() => {
-              const filteredItems = items.filter((item) =>
-                item.toLowerCase().includes(searchValue.toLowerCase())
-              );
-
-              if (filteredItems.length === 0 && searchValue.trim() !== "") {
-                return <div>No items match your search.</div>;
-              }
-
-              return filteredItems.map((item, index) => (
-                <div className="pantry-item" key={index}>
-                  {item}
-                  <button
-                    className="remove-button"
-                    onClick={() => removeItem(index)}
-                  >
-                    X
-                  </button>
-                </div>
-              ));
-            })()
-          )}
+    <div className="pantry-shell">
+      <header className="pantry-header">
+        <div className="pantry-title">
+          <span className="pantry-logo">🧺</span>
+          <h1>Pantry</h1>
         </div>
-      </div>
+        <div className="pantry-controls">
+          <div className="input-with-icon">
+            <input
+              ref={inputRef}
+              type="text"
+              placeholder="Add item e.g. '2 milk' or 'rice 1 lb'"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addItem(e.target.value);
+              }}
+            />
+            <button className="btn primary" onClick={() => addItem(inputRef.current?.value || "")}>Add</button>
+          </div>
 
-      <div className="pantry-input-container">
-        <input
-          className="pantry-input"
-          ref={inputRef}
-          type="text"
-          value={value}
-          placeholder="Type to add an item"
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-        />
-        <button className="add-button" onClick={() => addItem(value)}>
-          Add
-        </button>
-      </div>
+          <div className="filters">
+            <input
+              className="search"
+              type="text"
+              placeholder="Search pantry"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            <select value={category} onChange={(e) => setCategory(e.target.value)}>
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>{c[0].toUpperCase() + c.slice(1)}</option>
+              ))}
+            </select>
+            <select value={sort} onChange={(e) => setSort(e.target.value)}>
+              <option value="recent">Recent first</option>
+              <option value="az">A → Z</option>
+              <option value="za">Z → A</option>
+            </select>
+          </div>
+        </div>
+      </header>
+
+      <main className="pantry-grid">
+        {filtered.length === 0 ? (
+          <div className="empty">
+            <IllustrationEmpty />
+            <p>{items.length === 0 ? placeholder : "No items match your filters."}</p>
+          </div>
+        ) : (
+          filtered.map((it) => (
+            <article className="card" key={it.id}>
+              <div className="card-media" onClick={() => setCustomImg(it.id)} title="Click to set a custom image">
+                {it.imgUrl ? (
+                  <img src={it.imgUrl} alt={it.name} />
+                ) : (
+                  <div className="emoji-avatar" aria-hidden>{emojiFor(it.name)}</div>
+                )}
+              </div>
+              <div className="card-body">
+                <div className="card-top">
+                  <h3 className="card-title">{it.name}</h3>
+                  <span className={`pill ${it.category}`}>{it.category}</span>
+                </div>
+                <div className="qty-row">
+                  <button className="btn ghost" onClick={() => updateQty(it.id, -1)}>-</button>
+                  <span className="qty">{it.qty}{it.unit ? ` ${it.unit}` : ""}</span>
+                  <button className="btn ghost" onClick={() => updateQty(it.id, +1)}>+</button>
+                </div>
+              </div>
+              <div className="card-actions">
+                <button className="btn danger" onClick={() => removeItem(it.id)} title="Remove">Remove</button>
+              </div>
+            </article>
+          ))
+        )}
+      </main>
+
+      <footer className="pantry-footer">
+        <small>Tip: click an item image to add a custom photo URL. Quick-add supports quantities like “eggs x12”, “milk 2 L”, or just “tomato”.</small>
+      </footer>
     </div>
   );
-
 }
+
+function IllustrationEmpty() {
+  return (
+    <svg width="120" height="80" viewBox="0 0 120 80" role="img" aria-label="Empty pantry">
+      <defs>
+        <linearGradient id="g" x1="0" x2="1">
+          <stop offset="0" stopColor="#eef2ff" />
+          <stop offset="1" stopColor="#e0e7ff" />
+        </linearGradient>
+      </defs>
+      <rect x="0" y="10" width="120" height="60" rx="10" fill="url(#g)" />
+      <rect x="12" y="20" width="96" height="40" rx="6" fill="#fff" stroke="#e5e7eb" />
+      <circle cx="30" cy="40" r="10" fill="#f3f4f6" />
+      <rect x="46" y="32" width="50" height="6" rx="3" fill="#e5e7eb" />
+      <rect x="46" y="44" width="40" height="6" rx="3" fill="#e5e7eb" />
+    </svg>
+  );
+}
+
+
