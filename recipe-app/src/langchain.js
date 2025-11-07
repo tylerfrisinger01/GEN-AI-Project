@@ -1,16 +1,36 @@
 import * as z from "zod";
 import { ChatOpenAI } from "@langchain/openai";
-import { createAgent, tool } from "langchain";
+import { SystemMessage, HumanMessage } from "langchain";
+
+//const openAiKey = env.OPENAI_API_KEY;
 
 
 
 const model = new ChatOpenAI({
   model: "gpt-4.1",
-  apiKey: "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",
+  apiKey: "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",
 });
 
-const response = await model.invoke("Generate me a vegan lasagna recipe");
 
-console.log(
-  response
-);
+const systemMsg = new SystemMessage("You are a helpful assistant that helps create recipes based on their dietary preferences\
+ and only using ingredients that they give you. If no ingredients or dietary preferences are given, you should should return a list of recipes\
+ that are similar to the recipe name they entered. If no recipes can be created, you should say that no recipes can be created and return a list of recipes that\
+ are similar to what they asked for.");
+
+const messages = [
+  systemMsg,
+  new HumanMessage("I want to make a vegetarian lasagna made out of concrete and metal beams"),
+]
+// const response = await model.invoke(messages);
+
+async function getAiResponse() {
+  try {
+    const response = await model.invoke(messages);
+    return response;
+  } catch (error) {
+    console.error("Error invoking model: ", error);
+  }
+}
+
+
+export { getAiResponse };
