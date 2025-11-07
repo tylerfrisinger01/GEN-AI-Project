@@ -1,4 +1,4 @@
 .DS_Store
 package-lock.json
 recipe-app/recipes.db
-.env
+recipe-app/.env
