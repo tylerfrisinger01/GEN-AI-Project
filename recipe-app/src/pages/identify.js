@@ -25,7 +25,7 @@ async function detectWithFetch(file) {
           { inline_data: { data: base64, mime_type: mime } },
           {
             text:
-              "Identify what food this is and return only the food name. " +
+              "Identify what food this is and return only the food name, be as specific as possible. For example include any sauces or specific ingredients that you can clearly identify. " +
               "If unsure, reply exactly: Upload the photo from a different angle and try again."
           }
         ]
