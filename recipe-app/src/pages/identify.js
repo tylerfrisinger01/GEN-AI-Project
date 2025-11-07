@@ -1,76 +1,127 @@
 import * as React from 'react';
-import { useDropzone } from 'react-dropzone';
-import '../css/identify.css';
+import { useDropzone } from "react-dropzone";
+
+const API_KEY = "AIzaSyCdM41nbWrJku8ZDJ-ZxtYc2WnoF9uxpEA";
 
 
-function Identify() {
-  const { acceptedFiles, getRootProps, getInputProps } = useDropzone();
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onerror = () => reject(new Error("Failed to read file"));
+    r.onload = () => resolve(String(r.result).split(",")[1]);
+    r.readAsDataURL(file);
+  });
+}
 
-  const files = acceptedFiles.map(file => (
-    <li key={file.path}>
-      {file.path} - {file.size} bytes
-    </li>
-  ));
-  // function uploadImage() {
-  //   const imageUpload = document.getElementById('dropzone');
-  //   const files = imageUpload.files;
-  //   const messageBox = document.getElementById('message');
+async function detectWithFetch(file) {
+  const base64 = await fileToBase64(file);
+  const mime = file.type || "image/jpeg";
 
-  //   if (!files.length) {
-  //     messageBox.innerHTML = 'Please select an image';
-  //     return;
-  //   }
+  const body = {
+    contents: [
+      {
+        role: "user",
+        parts: [
+          { inline_data: { data: base64, mime_type: mime } },
+          {
+            text:
+              "Identify what food this is and return only the food name. " +
+              "If unsure, reply exactly: Upload the photo from a different angle and try again."
+          }
+        ]
+      }
+    ]
+  };
 
-  //   const formData = new FormData();
-  //   formData.append('image', files[0]);
+  const resp = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    }
+  );
 
-  //   fetch('server/endpoint', {
-  //     method: 'POST',
-  //     body: formData
-  //   })
-  //   .then(response => {
-  //     if (!response.ok) {
-  //       throw new Error('HTTP error ' + response.status);
-  //     }
-  //     return response.json();
-  //   })
-  //   .then(data => {
-  //     if (data.success) {
-  //       messageBox.innerHTML = 'Image Uploaded';
-  //       messageBox.style.color = 'green';
-  //       console.log('Server response: ', data);
-  //     } else {
-  //       messageBox.innerHTML = 'Error: ' + data.error;
-  //       messageBox.style.color = 'red';
-  //     }
-  //   })
-  //   .catch(error => {
-  //     messageBox.innerHTML = 'Error during upload: ' + error.message;
-  //     messageBox.style.color = 'red';
-  //     console.error('Upload Error: ', error);
-  //   });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error(data.error?.message || "Gemini request failed");
+
+  const text =
+    data.candidates?.[0]?.content?.parts
+      ?.map((p) => p.text || "")
+      .join("")
+      .trim() || "";
+
+  return text || "No result";
+}
+
+export default function Identify() {
+  const [status, setStatus] = React.useState("");
+  const [previewUrl, setPreviewUrl] = React.useState("");
+
+  const onDrop = React.useCallback(async (accepted) => {
+    if (!accepted?.length) return;
+    const file = accepted[0];
+    setPreviewUrl(URL.createObjectURL(file));
+    setStatus("Analyzing…");
+    try {
+      const result = await detectWithFetch(file);
+      setStatus(result);
+    } catch (e) {
+      console.error(e);
+      setStatus("Failed to analyze image.");
+    }
+  }, []);
+
+  const { getRootProps, getInputProps, isDragActive, acceptedFiles } =
+    useDropzone({
+      onDrop,
+      multiple: false,
+      accept: {
+        "image/jpeg": [".jpg", ".jpeg"],
+        "image/png": [".png"]
+      }
+    });
 
   return (
-    // <main className="tm-page">
-    //   <h1>Identify Recipes</h1>
-    //   <p>Upload an Image to identify whats in the recipe</p>
-    //   {/* <input type="file" id="imageUpload" accept="image/*" /> */}
-    //   <input type="dropzone" id="dropzone" accept="image/*"/>
-    //   <button onClick={uploadImage()}>Identify Recipe</button>
-    //   <div id="message"></div>
-    // </main>
-    <section className='container'>
-      <div {...getRootProps({className: 'dropzone'})}>
+    <section className="container" style={{ maxWidth: 680, margin: "24px auto" }}>
+      <div
+        {...getRootProps({ className: "dropzone" })}
+        style={{
+          border: "2px dashed #999",
+          padding: 24,
+          borderRadius: 12,
+          textAlign: "center",
+          cursor: "pointer"
+        }}
+      >
         <input {...getInputProps()} />
-        <p>Drag 'n' drop some files here, or click to select files</p>
-        <em>(Only *.jpeg and *.png images will be accepted)</em>
+        <p>{isDragActive ? "Drop it here…" : "Drag & drop or click to select an image"}</p>
+        <em>(*.jpeg or *.png)</em>
       </div>
-      <aside>
-        <h4>Files</h4>
-        <ul>{files}</ul>
+
+      <aside style={{ marginTop: 16 }}>
+        {acceptedFiles.length > 0 && (
+          <ul>
+            <li>
+              {acceptedFiles[0].name} — {acceptedFiles[0].size} bytes
+            </li>
+          </ul>
+        )}
+        {previewUrl && (
+          <img
+            src={previewUrl}
+            alt="preview"
+            style={{ maxWidth: 260, borderRadius: 8, marginTop: 8 }}
+          />
+        )}
+        {status && (
+          <p style={{ marginTop: 12 }}>
+            <strong>Result:</strong> {status}
+          </p>
+        )}
       </aside>
     </section>
   );
 }
 
-export default Identify
+
