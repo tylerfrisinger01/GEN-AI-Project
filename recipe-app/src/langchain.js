@@ -8,7 +8,7 @@ import { SystemMessage, HumanMessage } from "langchain";
 
 const model = new ChatOpenAI({
   model: "gpt-4.1",
-  apiKey: "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",
+  apiKey: "",
 });
 
 
