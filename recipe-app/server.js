@@ -96,7 +96,7 @@ EACH RECIPE OBJECT MUST HAVE:
   "diet": string,
   "cuisine": string,
   "ingredients": [
-    { "ingredient": string, "quantity": number, "unit": string, "prep": string|null, "notes": string|null }
+    { "ingredient": string, "quantity": number, "unit": string, "prep": string|null, "notes": string|null } 
   ],
   "steps": [string],   // plain sentences with NO leading numbers; the UI will number them
   "tags": [string]
@@ -106,7 +106,8 @@ CONSTRAINTS:
 - Use ONLY user-provided ingredients if given. If something essential is missing, FIRST try to substitute using items in USER PANTRY above. If still missing, you may add minimal common staples (salt, pepper, water, neutral oil, garlic/onion, lemon/vinegar).
 - Respect diet and cuisine strictly.
 - Prefer consistent units; default to US units.
-- Always give measured quantities (estimate if needed). For “to taste” items, set quantity: 0, unit: "", and put "to taste" in notes.
+- If the user inputs just a recipe name, return recipes that are similar to that name.
+- Always give measured quantities (estimate if needed). For “to taste” items, say the ingredient then say "To taste" and dont give a quantity of 0, and put "to taste" in notes.
 - Steps must be actionable and detailed (temps, times, pans, doneness cues).
 
 VALIDATION:
