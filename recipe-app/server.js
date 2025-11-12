@@ -26,7 +26,7 @@ app.use((req, res, next) => {
 // ---------------- AI Recipe Endpoint ----------------
 const model = new ChatOpenAI({
   model: 'gpt-4.1',
-  apiKey: 'REPLACE_WITH_YOUR_OPENAI_KEY',
+  apiKey: "", 
 });
 
 app.post('/api/ai-recipes', async (req, res) => {
@@ -48,6 +48,92 @@ app.post('/api/ai-recipes', async (req, res) => {
     res.status(500).json({ error: String(error?.message || error) });
   }
 });
+
+
+app.post('/api/ai-search', async (req, res) => {
+  try {
+    const {
+      q = '',
+      diet = '',
+      cuisine = '',
+      ingredients = [],
+      pantry = [],             
+      systemPrompt,
+      prompt
+    } = req.body || {};
+
+    // Build userPrompt if not provided
+    const userPrompt = typeof prompt === 'string' && prompt
+      ? prompt
+      : (() => {
+          const lines = [];
+          if (diet) lines.push(`Diet: ${diet}`);
+          if (cuisine) lines.push(`Cuisine: ${cuisine}`);
+          if (Array.isArray(ingredients) && ingredients.length) lines.push(`User-required ingredients: ${ingredients.join(', ')}`);
+          if (q) lines.push(`User query: ${q}`);
+          return lines.length
+            ? `Create exactly 3 recipes that satisfy ALL of the following:\n${lines.join('\n')}`
+            : `No filters provided. Propose 3 popular recipes.`;
+        })();
+
+    const defaultSystemPrompt =
+`You are a strict recipe generator.
+
+CONTEXT:
+- USER PANTRY (available for substitutions): ${JSON.stringify(pantry)}
+
+OUTPUT FORMAT:
+- Respond with a JSON ARRAY of EXACTLY 3 recipes.
+- No markdown, no prose, no backticks—JSON only.
+- If nothing was input, return no recipes.
+
+EACH RECIPE OBJECT MUST HAVE:
+{
+  "name": string,
+  "description": string,
+  "servings": number,
+  "total_time_minutes": number,
+  "diet": string,
+  "cuisine": string,
+  "ingredients": [
+    { "ingredient": string, "quantity": number, "unit": string, "prep": string|null, "notes": string|null }
+  ],
+  "steps": [string],   // plain sentences with NO leading numbers; the UI will number them
+  "tags": [string]
+}
+
+CONSTRAINTS:
+- Use ONLY user-provided ingredients if given. If something essential is missing, FIRST try to substitute using items in USER PANTRY above. If still missing, you may add minimal common staples (salt, pepper, water, neutral oil, garlic/onion, lemon/vinegar).
+- Respect diet and cuisine strictly.
+- Prefer consistent units; default to US units.
+- Always give measured quantities (estimate if needed). For “to taste” items, set quantity: 0, unit: "", and put "to taste" in notes.
+- Steps must be actionable and detailed (temps, times, pans, doneness cues).
+
+VALIDATION:
+- Return JSON that parses. Exactly 3 recipes. No comments. No trailing commas.
+
+EXAMPLE INGREDIENT ENTRY:
+{ "ingredient": "broccoli florets", "quantity": 300, "unit": "g", "prep": "bite-size", "notes": null }`;
+
+    const systemMsg = new SystemMessage(systemPrompt || defaultSystemPrompt);
+
+    // Redundantly include pantry in human message to keep it fresh in context
+    const pantryLine = pantry?.length
+      ? `Pantry items available for substitution: ${pantry.join(', ')}`
+      : 'Pantry items available for substitution: (none)';
+
+    const messages = [systemMsg, new HumanMessage(`${pantryLine}\n\n${userPrompt}`)];
+
+    const response = await model.invoke(messages);
+    const text = response?.content ?? response?.text ?? '';
+    res.json({ text });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: String(err?.message || err) });
+  }
+});
+
+
 
 // ---------------- Existing endpoints ----------------
 app.get('/api/health', (req, res) => {

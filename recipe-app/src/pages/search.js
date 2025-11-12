@@ -1,4 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { generateSearchRecipes } from "../api/aiSearch";
+import { getPantry } from "../data/pantry";
 //import { getAiResponse } from "../langchain";
 
 /**
@@ -20,8 +22,33 @@ const S = {
   inputWrap: { position: "relative", border: "1px solid #e2e8f0", borderRadius: 16, background: "#fff", padding: 12, marginBottom: 16 },
   inputRow: { display: "flex", gap: 10, alignItems: "center", padding: 10, border: "1px solid #e2e8f0", borderRadius: 12, background: "#fff", flexWrap: "wrap" },
   pillsWrap: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", maxWidth: "100%" },
-  pill: { display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 999, fontSize: 12, fontWeight: 600, background: "#0f172a", color: "#fff", border: "1px solid #0f172a" },
-  pillBtn: { display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 999, border: "1px solid #cbd5e1", background: "#fff", color: "#0f172a", cursor: "pointer", fontSize: 12, lineHeight: "16px", padding: 0 },
+  pill: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "4px 8px",
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 700,
+    background: "#16a34a",          // green-600
+    color: "#fff",
+    border: "1px solid #16a34a",
+  },
+  pillBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 18,
+    height: 18,
+    borderRadius: 999,
+    border: "1px solid #a7f3d0",     // emerald-200 accent
+    background: "#ecfdf5",           // emerald-50
+    color: "#065f46",                // emerald-700
+    cursor: "pointer",
+    fontSize: 12,
+    lineHeight: "16px",
+    padding: 0,
+  },
 
   textInput: { border: "none", outline: "none", flex: 1, minWidth: 160, fontSize: 16 },
 
@@ -34,10 +61,14 @@ const S = {
   layout: { display: "grid", gridTemplateColumns: "1fr", gap: 16 },
   card: { border: "1px solid #e2e8f0", borderRadius: 16, background: "#fff", padding: 16 },
   chip: (active) => ({
-    fontSize: 12, padding: "6px 10px", borderRadius: 999,
-    border: "1px solid " + (active ? "#0f172a" : "#cbd5e1"),
-    background: active ? "#0f172a" : "#fff", color: active ? "#fff" : "#0f172a",
-    cursor: "pointer", fontWeight: 600
+    fontSize: 12,
+  padding: "6px 10px",
+  borderRadius: 999,
+  border: `1px solid ${active ? "#16a34a" : "#86efac"}`, // green-600 / green-200
+  background: active ? "#16a34a" : "#ffffff",
+  color: active ? "#ffffff" : "#065f46",                 // emerald-700 text when inactive
+  cursor: "pointer",
+  fontWeight: 700,
   }),
   select: { padding: "8px 12px", borderRadius: 10, border: "1px solid #cbd5e1", background: "#fff", fontSize: 13 },
 
@@ -53,7 +84,16 @@ const S = {
 
   pager: { display: "flex", gap: 8, justifyContent: "center", marginTop: 12 },
   btn: { border: "1px solid #cbd5e1", borderRadius: 10, background: "#fff", padding: "8px 12px", fontSize: 13, cursor: "pointer", fontWeight: 600 },
-  btnPri: { border: "1px solid #0f172a", borderRadius: 10, background: "#0f172a", color: "#fff", padding: "10px 14px", fontSize: 14, cursor: "pointer", fontWeight: 700 },
+  btnPri: {
+    border: "1px solid #16a34a",
+    borderRadius: 10,
+    background: "#16a34a",
+    color: "#fff",
+    padding: "10px 14px",
+    fontSize: 14,
+    cursor: "pointer",
+    fontWeight: 800,
+  },
 
   error: { border: "1px solid #fecaca", background: "#fef2f2", color: "#b91c1c", padding: 12, borderRadius: 12 },
   skel: { border: "1px solid #e2e8f0", borderRadius: 16, background: "#fff" },
@@ -153,6 +193,14 @@ export default function Search() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
 
+  const [aiRecipes, setAiRecipes] = useState([]);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiErr, setAiErr] = useState(null);
+  const [usePantry, setUsePantry] = useState(false);
+  const [pantryItems, setPantryItems] = useState([]);
+  const pantryLoadedRef = useRef(false);
+
+
   const [openId, setOpenId] = useState(null);
   const [detail, setDetail] = useState(null);
   const detailsCacheRef = useRef(new Map());
@@ -173,6 +221,18 @@ export default function Search() {
       }
     } catch {}
   }, []);
+
+  useEffect(() => {
+    if (usePantry && !pantryLoadedRef.current) {
+      pantryLoadedRef.current = true;
+      getPantry()
+        .then(setPantryItems)
+        .catch((err) => {
+          console.error("Error loading pantry:", err);
+          pantryLoadedRef.current = false; // allow retry if it failed
+        });
+    }
+  }, [usePantry]);
 
   // ---- LOCALSTORAGE: save whenever filters change
   useEffect(() => {
@@ -237,6 +297,17 @@ export default function Search() {
       .slice(0, 200);
   }, [facets.ingredients, results.items]);
 
+  const hasCriteria = useMemo(() => {
+    return (
+      q.trim().length > 0 ||          // text in the box
+      !!diet ||                       // a diet chip
+      !!cuisine ||                    // a cuisine chip
+      pickedIngredients.length > 0 || // any ingredients picked
+      usePantry                       // pantry toggle on
+    );
+  }, [q, diet, cuisine, pickedIngredients.length, usePantry]);
+
+
   const filteredSuggestions = useMemo(() => {
     const q = ingredientInput.trim().toLowerCase();
     const base = ingredientSuggestions.filter(s => !pickedIngredients.includes(s.name));
@@ -254,20 +325,48 @@ export default function Search() {
     setPickedIngredients((xs) => (xs.includes(name) ? xs.filter((x) => x !== name) : [...xs, name]));
 
   const pills = useMemo(() => {
-    const xs = [];
-    if (diet) xs.push({ key: `diet:${diet}`, label: `Diet: ${diet}`, onRemove: () => setDiet("") });
-    if (cuisine) xs.push({ key: `cuisine:${cuisine}`, label: `Cuisine: ${cuisine}`, onRemove: () => setCuisine("") });
-    pickedIngredients.forEach((n) => {
-      xs.push({ key: `ing:${n}`, label: n, onRemove: () => setPickedIngredients((arr) => arr.filter((x) => x !== n)) });
-    });
-    return xs;
-  }, [diet, cuisine, pickedIngredients]);
+  const xs = [];
+  if (diet) xs.push({ key: `diet:${diet}`, label: `Diet: ${diet}`, onRemove: () => setDiet("") });
+  if (cuisine) xs.push({ key: `cuisine:${cuisine}`, label: `Cuisine: ${cuisine}`, onRemove: () => setCuisine("") });
+  pickedIngredients.forEach((n) => {
+    xs.push({ key: `ing:${n}`, label: n, onRemove: () => setPickedIngredients((arr) => arr.filter((x) => x !== n)) });
+  });
+  if (usePantry) {
+    xs.push({ key: 'pantry:on', label: `Using Pantry (${pantryItems.length || 0})`, onRemove: () => setUsePantry(false) });
+  }
+  return xs;
+}, [diet, cuisine, pickedIngredients, usePantry, pantryItems.length]);
 
   const infoLine = useMemo(() => {
     if (!dq) return "Type a query to begin.";
     const { page: p, pages, total } = results;
     return `Showing page ${p} of ${pages || 0}, total ${total} results for “${dq}”.`;
   }, [dq, results]);
+
+  async function runAI() {
+    if (!hasCriteria) {               // hard stop: nothing to search
+      setAiRecipes([]);
+      setAiErr(null);
+      return;
+    }
+    try {
+      setAiLoading(true); setAiErr(null);
+      const pantry = usePantry ? pantryItems.map(i => (i.name || i.item || i.ingredient || '').toString().trim()).filter(Boolean) : [];
+      const data = await generateSearchRecipes({
+        q: dq,
+        diet,
+        cuisine,
+        ingredients: pickedIngredients,
+        pantry,                   
+      });
+      setAiRecipes(data);
+    } catch (e) {
+      setAiErr(String(e.message || e));
+      setAiRecipes([]);
+    } finally {
+      setAiLoading(false);
+    }
+  }
 
   // popover close handlers
   useEffect(() => {
@@ -288,276 +387,401 @@ export default function Search() {
   }, [menuOpen]);
 
   return (
-    <main style={S.page}>
-      <h1 style={S.h1}>Local Recipe Search</h1>
+  <main style={S.page}>
+    <h1 style={S.h1}>Recipe Search</h1>
 
-      {/* Query + pills + menu */}
-      <div style={S.inputWrap}>
-        <div style={S.inputRow} ref={inputRef} onClick={() => setMenuOpen(true)}>
-          <MagnifierIcon />
+    {/* Query + pills + menu */}
+    <div style={S.inputWrap}>
+      <div style={S.inputRow} ref={inputRef} onClick={() => setMenuOpen(true)}>
+        <MagnifierIcon />
 
-          {/* Active pills INSIDE bar */}
-          {pills.length > 0 && (
-            <div style={S.pillsWrap}>
-              {pills.map((p) => (
-                <span key={p.key} style={S.pill}>
-                  {p.label}
-                  <button
-                    style={S.pillBtn}
-                    onClick={(e) => { e.stopPropagation(); p.onRemove(); }}
-                    aria-label={`Remove ${p.label}`}
-                    title="Remove"
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          )}
-
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={pills.length ? "Refine search…" : "Search recipes (e.g., chicken pasta)"}
-            style={S.textInput}
-            onFocus={() => setMenuOpen(true)}
-          />
-          <button style={S.btn} onClick={() => setQ("")}>Clear</button>
-        </div>
-
-        {/* Popover */}
-        {menuOpen && (
-          <div style={S.menu} ref={menuRef} role="dialog" aria-label="Quick Filters">
-            {/* Diet */}
-            <div style={S.menuRow}>
-              <div style={S.menuTitle}>Diet</div>
-              <div style={S.menuChips}>
-                <button style={S.chip(!diet)} onClick={() => setDiet("")}>All</button>
-                {facets.diets.map((d) => (
-                  <button key={d.name} style={S.chip(diet === d.name)} onClick={() => setDiet(d.name)}>
-                    {d.name} {d.count ? `(${d.count})` : ""}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Cuisine */}
-            <div style={S.menuRow}>
-              <div style={S.menuTitle}>Cuisine</div>
-              <div style={S.menuChips}>
-                <button style={S.chip(!cuisine)} onClick={() => setCuisine("")}>All</button>
-                {facets.cuisines.map((c) => (
-                  <button key={c.name} style={S.chip(cuisine === c.name)} onClick={() => setCuisine(c.name)}>
-                    {c.name} {c.count ? `(${c.count})` : ""}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Ingredients */}
-            <div style={S.menuRow}>
-              <div style={S.menuTitle}>Ingredients</div>
-              <div>
-                <input
-                  value={ingredientInput}
-                  onChange={(e) => setIngredientInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === ",") {
-                      e.preventDefault();
-                      const pieces = ingredientInput.split(",").map(s => s.trim()).filter(Boolean);
-                      if (pieces.length) {
-                        setPickedIngredients((xs) => {
-                          const set = new Set(xs);
-                          pieces.forEach(p => set.add(p));
-                          return Array.from(set);
-                        });
-                        setIngredientInput("");
-                      }
-                    }
-                  }}
-                  placeholder="Type to add (press Enter)…"
-                  style={S.inputSmall}
-                />
-                <div style={{ ...S.menuChips, marginTop: 8 }}>
-                  {filteredSuggestions.length === 0 ? (
-                    <span style={{ fontSize: 12, color: "#64748b" }}>No suggestions.</span>
-                  ) : (
-                    filteredSuggestions.map((s) => {
-                      const active = pickedIngredients.includes(s.name);
-                      return (
-                        <button
-                          key={s.name}
-                          style={S.chip(active)}
-                          onClick={() => toggleIngredient(s.name)}
-                          title={active ? "Remove" : "Add"}
-                        >
-                          {s.name} {typeof s.count === "number" && s.count > 0 ? `(${s.count})` : ""}
-                        </button>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
-              <button
-                style={S.btn}
-                onClick={() => {
-                  setDiet(""); setCuisine(""); setPickedIngredients([]); setIngredientInput("");
-                  try { localStorage.removeItem(LS_KEY); } catch {}
-                }}
-                title="Clear selections"
-              >
-                Clear
-              </button>
-              <button
-                style={S.btnPri}
-                onClick={() => setMenuOpen(false)}
-                title="Apply filters"
-              >
-                Apply
-              </button>
-            </div>
+        {/* Active pills INSIDE bar */}
+        {pills.length > 0 && (
+          <div style={S.pillsWrap}>
+            {pills.map((p) => (
+              <span key={p.key} style={S.pill}>
+                {p.label}
+                <button
+                  style={S.pillBtn}
+                  onClick={(e) => { e.stopPropagation(); p.onRemove(); }}
+                  aria-label={`Remove ${p.label}`}
+                  title="Remove"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
           </div>
         )}
 
-        <div style={S.row}>
-          <span style={S.small}>Sort</span>
-          <select style={S.select} value={sort} onChange={(e) => setSort(e.target.value)}>
-            <option value="relevance">Relevance</option>
-            <option value="rating">Rating</option>
-            <option value="minutes-asc">Time: Low → High</option>
-            <option value="minutes-desc">Time: High → Low</option>
-            <option value="popularity">Popularity</option>
-          </select>
-
-          <span style={S.small}>Per page</span>
-          <select style={S.select} value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
-            {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
-          </select>
-        </div>
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder={pills.length ? "Refine search…" : "Search recipes (e.g., chicken pasta)"}
+          style={S.textInput}
+          onFocus={() => setMenuOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              runAI(); // ⟵ trigger AI on Enter
+              setMenuOpen(false);
+            }
+          }}
+        />
+        <button style={S.btn} onClick={() => setQ("")}>Clear</button>
       </div>
 
-      <div style={S.layout}>
-        <section>
-          <div style={{ ...S.row, justifyContent: "space-between", marginTop: 0 }}>
-            <div style={S.small}>{infoLine}</div>
-            <div>
-              <button
-                style={{ ...S.btn, marginRight: 6, opacity: results.page <= 1 ? 0.6 : 1 }}
-                disabled={results.page <= 1 || loading}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-              >
-                ← Prev
-              </button>
-              <button
-                style={S.btnPri}
-                disabled={loading || results.page >= results.pages}
-                onClick={() => setPage((p) => p + 1)}
-              >
-                Next →
-              </button>
+      {/* Popover */}
+      {menuOpen && (
+        <div style={S.menu} ref={menuRef} role="dialog" aria-label="Quick Filters">
+          {/* Diet */}
+          <div style={S.menuRow}>
+            <div style={S.menuTitle}>Diet</div>
+            <div style={S.menuChips}>
+              <button style={S.chip(!diet)} onClick={() => setDiet("")}>All</button>
+              {facets.diets.map((d) => (
+                <button key={d.name} style={S.chip(diet === d.name)} onClick={() => setDiet(d.name)}>
+                  {d.name} {d.count ? `(${d.count})` : ""}
+                </button>
+              ))}
             </div>
           </div>
 
-          {err && <div style={S.error}>{err}</div>}
+          {/* Cuisine */}
+          <div style={S.menuRow}>
+            <div style={S.menuTitle}>Cuisine</div>
+            <div style={S.menuChips}>
+              <button style={S.chip(!cuisine)} onClick={() => setCuisine("")}>All</button>
+              {facets.cuisines.map((c) => (
+                <button key={c.name} style={S.chip(cuisine === c.name)} onClick={() => setCuisine(c.name)}>
+                  {c.name} {c.count ? `(${c.count})` : ""}
+                </button>
+              ))}
+            </div>
+          </div>
 
-          <div style={S.list}>
-            {loading && (
-              <>
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <div key={i} style={{ ...S.skel, padding: 16 }}>
-                    <div style={{ ...S.skelBar, width: "60%" }} />
-                    <div style={{ height: 8 }} />
-                    <div style={{ ...S.skelBar, width: "35%" }} />
-                    <div style={{ height: 8 }} />
-                    <div style={{ ...S.skelBar, width: "80%" }} />
-                  </div>
-                ))}
-              </>
-            )}
+          {/* Ingredients */}
+          <div style={S.menuRow}>
+            <div style={S.menuTitle}>Ingredients</div>
+            <div>
+              <input
+                value={ingredientInput}
+                disabled={usePantry} 
+                onChange={(e) => setIngredientInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (usePantry) return; 
+                  if (e.key === "Enter" || e.key === ",") {
+                    e.preventDefault();
+                    const pieces = ingredientInput.split(",").map(s => s.trim()).filter(Boolean);
+                    if (pieces.length) {
+                      setPickedIngredients((xs) => {
+                        const set = new Set(xs);
+                        pieces.forEach(p => set.add(p));
+                        return Array.from(set);
+                      });
+                      setIngredientInput("");
+                    }
+                  }
+                }}
+                placeholder={
+                  usePantry
+                    ? "Using pantry items…" 
+                    : "Type to add (press Enter)…"
+                }
+                style={{
+                  ...S.inputSmall,
+                  opacity: usePantry ? 0.5 : 1,
+                  pointerEvents: usePantry ? "none" : "auto",
+                }}
+              />
 
-            {!loading && dq && results.items.length === 0 && !err && (
-              <div style={{ ...S.card, textAlign: "center" }}>No results. Try different keywords or filters.</div>
-            )}
+              {/* Suggestions list */}
+              <div
+                style={{
+                  ...S.menuChips,
+                  marginTop: 8,
+                  opacity: usePantry ? 0.5 : 1,
+                  pointerEvents: usePantry ? "none" : "auto",
+                }}
+              >
+                {filteredSuggestions.length === 0 ? (
+                  <span style={{ fontSize: 12, color: "#64748b" }}>No suggestions.</span>
+                ) : (
+                  filteredSuggestions.map((s) => {
+                    const active = pickedIngredients.includes(s.name);
+                    return (
+                      <button
+                        key={s.name}
+                        style={S.chip(active)}
+                        onClick={() => toggleIngredient(s.name)}
+                        title={active ? "Remove" : "Add"}
+                        disabled={usePantry}
+                      >
+                        {s.name} {typeof s.count === "number" && s.count > 0 ? `(${s.count})` : ""}
+                      </button>
+                    );
+                  })
+                )}
+              </div>
 
-            {results.items.map((r) => (
-              <article key={r.id} style={S.rCard}>
-                <div style={S.title} onClick={() => openDetails(r.id)}>
-                  {highlight(r.name, dq)}
+              {/* Pantry toggle */}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
+                <button
+                  style={S.chip(usePantry)}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const next = !usePantry; 
+                    setUsePantry(next);
+                    if (next) {
+                      setPickedIngredients([]); 
+                    }
+                  }}
+                  title={
+                    usePantry
+                      ? "Click to stop using pantry for substitutions"
+                      : "Click to let AI use your pantry for substitutions"
+                  }
+                >
+                  {usePantry ? "✔ Using Pantry" : "Use my Pantry"}
+                </button>
+                {usePantry && (
+                  <span style={{ fontSize: 12, color: "#64748b" }}>
+                    {pantryItems.length
+                      ? `${pantryItems.length} items loaded`
+                      : "loading…"}
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 8 }}>
+            <button
+              style={S.btn}
+              onClick={() => {
+                setDiet("");
+                setCuisine("");
+                setPickedIngredients([]);
+                setIngredientInput("");
+                try { localStorage.removeItem(LS_KEY); } catch {}
+              }}
+              title="Clear selections"
+            >
+              Clear
+            </button>
+            <button
+              style={S.btnPri}
+              onClick={() => {
+                setMenuOpen(false);
+                runAI();
+              }}
+              title="Search"
+            >
+              Search
+            </button>
+          </div>
+        </div> 
+      )}
+
+      <div style={S.row}>
+        <span style={S.small}>Sort</span>
+        <select style={S.select} value={sort} onChange={(e) => setSort(e.target.value)}>
+          <option value="relevance">Relevance</option>
+          <option value="rating">Rating</option>
+          <option value="minutes-asc">Time: Low → High</option>
+          <option value="minutes-desc">Time: High → Low</option>
+          <option value="popularity">Popularity</option>
+        </select>
+
+        <span style={S.small}>Per page</span>
+        <select style={S.select} value={pageSize} onChange={(e) => setPageSize(Number(e.target.value))}>
+          {PAGE_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+        </select>
+      </div>
+    </div>
+
+    <div style={S.layout}>
+      <section>
+        <div style={{ ...S.row, justifyContent: "space-between", marginTop: 0 }}>
+          <div style={S.small}>{infoLine}</div>
+          <div>
+            <button
+              style={{ ...S.btn, marginRight: 6, opacity: results.page <= 1 ? 0.6 : 1 }}
+              disabled={results.page <= 1 || loading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+            >
+              ← Prev
+            </button>
+            <button
+              style={S.btnPri}
+              disabled={loading || results.page >= results.pages}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+
+        {err && <div style={S.error}>{err}</div>}
+
+        {/* ==== AI Recipe Suggestions (Section 4) ==== */}
+        {(aiLoading || aiErr || aiRecipes.length > 0) && (
+          <section style={{ marginTop: 12 }}>
+            <div style={{ ...S.card, borderColor: '#c7d2fe', background: '#eef2ff' }}>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>AI Recipe Suggestions</div>
+              {aiLoading && <div>Generating…</div>}
+              {aiErr && <div style={S.error}>{aiErr}</div>}
+              {!aiLoading && !aiErr && aiRecipes.length > 0 && (
+                <div style={{ display: 'grid', gap: 12 }}>
+                  {aiRecipes.map((r, i) => (
+                    <article key={i} style={{ ...S.card, borderColor: '#cbd5e1' }}>
+                      <div style={S.title}>{r.name}</div>
+
+                      {/* Optional metadata if present */}
+                      <div style={S.meta}>
+                        {typeof r.total_time_minutes === 'number' && <span><ClockIcon /> {r.total_time_minutes}m</span>}
+                        {r.servings && <span>Serves {r.servings}</span>}
+                        {r.cuisine && <span>{r.cuisine}</span>}
+                        {r.diet && <span>{r.diet}</span>}
+                        {Array.isArray(r.tags) && r.tags.slice(0,4).map(t => <span key={t} style={S.tag}>{t}</span>)}
+                      </div>
+
+                      {r.description && <p style={{ ...S.details, marginTop: 8 }}>{r.description}</p>}
+
+                      {!!r.ingredients?.length && (
+                        <>
+                          <div style={S.subTitle}>Ingredients</div>
+                          <ul>
+                            {r.ingredients.map((x, idx) => {
+                              if (typeof x === 'string') {
+                                return <li key={idx}>{x}</li>;
+                              }
+                              const qty = (x?.quantity ?? '') !== '' ? `${x.quantity} ` : '';
+                              const unit = x?.unit ? `${x.unit} ` : '';
+                              const name = x?.ingredient || '';
+                              const prep = x?.prep ? `, ${x.prep}` : '';
+                              const notes = x?.notes ? ` (${x.notes})` : '';
+                              return <li key={idx}>{`${qty}${unit}${name}${prep}${notes}`.trim()}</li>;
+                            })}
+                          </ul>
+                        </>
+                      )}
+
+                      {!!r.steps?.length && (
+                        <>
+                          <div style={S.subTitle}>Steps</div>
+                          <ol>
+                            {r.steps.map((x, idx) => <li key={idx}>{x}</li>)}
+                          </ol>
+                        </>
+                      )}
+                    </article>
+                  ))}
                 </div>
-                <div style={S.meta}>
-                  <span><ClockIcon /> {r.minutes}m</span>
-                  {r.rating != null && <span>★ {r.rating}</span>}
-                  {!!r.popularity && <span>❤ {r.popularity}</span>}
-                  {r.cuisine && <span>{r.cuisine}</span>}
-                  {r.diet && <span>{r.diet}</span>}
-                </div>
+              )}
+            </div>
+          </section>
+        )}
+        {/* ========================================= */}
 
+        <div style={S.list}>
+          {loading && (
+            <>
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} style={{ ...S.skel, padding: 16 }}>
+                  <div style={{ ...S.skelBar, width: "60%" }} />
+                  <div style={{ height: 8 }} />
+                  <div style={{ ...S.skelBar, width: "35%" }} />
+                  <div style={{ height: 8 }} />
+                  <div style={{ ...S.skelBar, width: "80%" }} />
+                </div>
+              ))}
+            </>
+          )}
+
+          {!loading && dq && results.items.length === 0 && !err && (
+            <div style={{ ...S.card, textAlign: "center" }}>No results. Try different keywords or filters.</div>
+          )}
+
+          {results.items.map((r) => (
+            <article key={r.id} style={S.rCard}>
+              <div style={S.title} onClick={() => openDetails(r.id)}>
+                {highlight(r.name, dq)}
+              </div>
+              <div style={S.meta}>
+                <span><ClockIcon /> {r.minutes}m</span>
+                {r.rating != null && <span>★ {r.rating}</span>}
+                {!!r.popularity && <span>❤ {r.popularity}</span>}
+                {r.cuisine && <span>{r.cuisine}</span>}
+                {r.diet && <span>{r.diet}</span>}
+              </div>
+
+              {!!r.ingredients?.length && (
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                  {r.ingredients.slice(0, 12).map((ing) => (
+                    <span key={ing} style={S.tag}>{ing}</span>
+                  ))}
+                </div>
+              )}
+
+              {r.description && (
+                <p style={{ ...S.details, marginTop: 8 }}>
+                  {highlight(r.description.slice(0, 240), dq)}{r.description.length > 240 ? "…" : ""}
+                </p>
+              )}
+
+              <div style={S.actionRow}>
+                <button style={S.btn} onClick={() => openDetails(r.id)}>
+                  {openId === r.id ? "Hide details" : "Show full ingredients & instructions"}
+                </button>
                 {!!r.ingredients?.length && (
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                    {r.ingredients.slice(0, 12).map((ing) => (
-                      <span key={ing} style={S.tag}>{ing}</span>
-                    ))}
-                  </div>
-                )}
-
-                {r.description && (
-                  <p style={{ ...S.details, marginTop: 8 }}>
-                    {highlight(r.description.slice(0, 240), dq)}{r.description.length > 240 ? "…" : ""}
-                  </p>
-                )}
-
-                <div style={S.actionRow}>
-                  <button style={S.btn} onClick={() => openDetails(r.id)}>
-                    {openId === r.id ? "Hide details" : "Show full ingredients & instructions"}
+                  <button
+                    style={S.btn}
+                    onClick={() => copy(r.ingredients.join("\n"))}
+                    title="Copy ingredients to clipboard"
+                  >
+                    Copy ingredients
                   </button>
-                  {!!r.ingredients?.length && (
-                    <button
-                      style={S.btn}
-                      onClick={() => copy(r.ingredients.join("\n"))}
-                      title="Copy ingredients to clipboard"
-                    >
-                      Copy ingredients
-                    </button>
+                )}
+              </div>
+
+              {openId === r.id && (
+                <div style={S.drawer}>
+                  {!detail || detail.id !== r.id ? (
+                    <div style={{ color: "#64748b" }}>Loading details…</div>
+                  ) : (
+                    <>
+                      {!!detail.ingredients?.length && (
+                        <>
+                          <div style={S.subTitle}>Ingredients</div>
+                          <ul>
+                            {detail.ingredients.map((x, i) => <li key={i}>{x}</li>)}
+                          </ul>
+                        </>
+                      )}
+                      {detail.steps && (
+                        <>
+                          <div style={S.subTitle}>Instructions</div>
+                          <p style={S.details}>{detail.steps}</p>
+                        </>
+                      )}
+                      <div style={S.actionRow}>
+                        <button style={S.btn} onClick={() => window.print()}>Print</button>
+                        <button style={S.btn} onClick={() => { setOpenId(null); setDetail(null); }}>Close</button>
+                      </div>
+                    </>
                   )}
                 </div>
+              )}
+            </article>
+          ))}
+        </div>
+      </section>
+    </div>
+  </main>
+);
 
-                {openId === r.id && (
-                  <div style={S.drawer}>
-                    {!detail || detail.id !== r.id ? (
-                      <div style={{ color: "#64748b" }}>Loading details…</div>
-                    ) : (
-                      <>
-                        {!!detail.ingredients?.length && (
-                          <>
-                            <div style={S.subTitle}>Ingredients</div>
-                            <ul>
-                              {detail.ingredients.map((x, i) => <li key={i}>{x}</li>)}
-                            </ul>
-                          </>
-                        )}
-                        {detail.steps && (
-                          <>
-                            <div style={S.subTitle}>Instructions</div>
-                            <p style={S.details}>{detail.steps}</p>
-                          </>
-                        )}
-                        <div style={S.actionRow}>
-                          <button style={S.btn} onClick={() => window.print()}>Print</button>
-                          <button style={S.btn} onClick={() => { setOpenId(null); setDetail(null); }}>Close</button>
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
-              </article>
-            ))}
-          </div>
-        </section>
-      </div>
-    </main>
-  );
+  
 }
 

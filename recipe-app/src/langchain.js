@@ -4,7 +4,7 @@ import { SystemMessage, HumanMessage } from "langchain";
 // Configure your OpenAI model
 const model = new ChatOpenAI({
   model: "gpt-4.1",
-  apiKey: "REPLACE_WITH_YOUR_OPENAI_KEY", // make sure to set your key
+  apiKey: "",
 });
 
 /**
@@ -48,7 +48,7 @@ async function generateSearchResponse(userPrompt, systemPrompt = null) { // for 
     const messages = [
       systemMsg || new SystemMessage(
         "You are a helpful assistant that helps create recipes based on their dietary preferences." +
-        "and only using ingredients that they give you, when you are asked to create a recipee you should return 3 recipes. If no ingredients or dietary preferences are given, you should should return a list of recipes" +
+        "and only using ingredients that they give you. If no ingredients or dietary preferences are given, you should should return a list of recipes" +
         "that are similar to the recipe name they entered. If no recipes can be created, you should say that no recipes can be created and return a list of recipes that" +
         "are similar to what they asked for."
       ),
