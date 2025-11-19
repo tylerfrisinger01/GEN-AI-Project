@@ -1,7 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { generateSearchRecipes } from "../api/aiSearch";
 import { getPantry } from "../data/pantry";
-//import { getAiResponse } from "../langchain";
+import {
+  toggleFavoriteLocal,
+  toggleFavoriteAiSnapshot,
+  listLocalFavorites,
+  listAiFavorites,
+} from "../data/favorites";
+
 
 /**
  * Local Recipe Search
@@ -102,6 +108,41 @@ const S = {
   drawer: { marginTop: 12, borderTop: "1px solid #e2e8f0", paddingTop: 12 },
   subTitle: { fontWeight: 800, margin: "10px 0 6px" },
   actionRow: { display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 },
+
+  kebabWrap: {
+    position: "relative",
+  },
+  kebabBtn: {
+    border: "none",
+    background: "transparent",
+    padding: 4,
+    borderRadius: 999,
+    cursor: "pointer",
+    lineHeight: 0,
+  },
+  kebabMenu: {
+    position: "absolute",
+    top: 24,
+    right: 0,
+    background: "#ffffff",
+    border: "1px solid #e2e8f0",
+    borderRadius: 8,
+    boxShadow: "0 10px 30px rgba(15,23,42,0.15)",
+    padding: "4px 0",
+    zIndex: 30,
+    minWidth: 140,
+  },
+  kebabItem: {
+    width: "100%",
+    display: "block",
+    padding: "6px 12px",
+    border: "none",
+    background: "transparent",
+    textAlign: "left",
+    fontSize: 13,
+    cursor: "pointer",
+  },
+
 };
 
 if (typeof document !== "undefined" && !document.getElementById("searchPulseKeyframes")) {
@@ -122,6 +163,20 @@ function ClockIcon() {
   return (
     <svg viewBox="0 0 24 24" style={{ width: 16, height: 16, display: "inline-block", verticalAlign: "-3px" }} aria-hidden>
       <path fill="#64748b" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm.75 5.5a.75.75 0 0 0-1.5 0V12c0 .41.34.75.75.75H15a.75.75 0 0 0 0-1.5h-2.25V7.5z"/>
+    </svg>
+  );
+}
+
+function DotsIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      style={{ width: 18, height: 18, display: "inline-block" }}
+      aria-hidden
+    >
+      <circle cx="6" cy="12" r="1.5" fill="#64748b" />
+      <circle cx="12" cy="12" r="1.5" fill="#64748b" />
+      <circle cx="18" cy="12" r="1.5" fill="#64748b" />
     </svg>
   );
 }
@@ -200,6 +255,12 @@ export default function Search() {
   const [pantryItems, setPantryItems] = useState([]);
   const pantryLoadedRef = useRef(false);
 
+  const [favoriteLocalIds, setFavoriteLocalIds] = useState([]);      // recipe.id from local DB
+  const [favoriteAiKeys, setFavoriteAiKeys] = useState([]);          // synthetic keys for AI recipes
+  const [openMenuKey, setOpenMenuKey] = useState(null);              // which 3-dot menu is open
+  const [favoriteAiNames, setFavoriteAiNames] = useState([]);       // persisted AI favorites by name
+  const [favoriteErr, setFavoriteErr] = useState(null);
+
 
   const [openId, setOpenId] = useState(null);
   const [detail, setDetail] = useState(null);
@@ -221,6 +282,43 @@ export default function Search() {
       }
     } catch {}
   }, []);
+
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadFavorites() {
+      try {
+        const [localFavs, aiFavs] = await Promise.all([
+          listLocalFavorites(), // [{ recipe_id, created_at }]
+          listAiFavorites(),    // [{ name, ingredients, instructions, created_at }]
+        ]);
+
+        if (cancelled) return;
+
+        setFavoriteLocalIds(
+          (localFavs || [])
+            .map((f) => f.recipe_id)
+            .filter((id) => id != null)
+        );
+
+        setFavoriteAiNames(
+          (aiFavs || [])
+            .map((f) => f.name)
+            .filter(Boolean)
+        );
+      } catch (e) {
+        console.error("Error loading favorites:", e);
+        // optional: setFavoriteErr("Failed to load favorites");
+      }
+    }
+
+    loadFavorites();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
 
   useEffect(() => {
     if (usePantry && !pantryLoadedRef.current) {
@@ -367,6 +465,79 @@ export default function Search() {
       setAiLoading(false);
     }
   }
+
+    // Local DB recipes: save recipe_id only, everything else null
+  async function handleToggleFavoriteLocal(recipe) {
+    setFavoriteErr(null);
+    const isFav = favoriteLocalIds.includes(recipe.id);
+
+    // optimistic UI update
+    setFavoriteLocalIds((prev) =>
+      isFav ? prev.filter((x) => x !== recipe.id) : [...prev, recipe.id]
+    );
+
+    try {
+      const nowFav = await toggleFavoriteLocal(recipe.id); // uses /data/favorites.js
+
+      // make sure state matches DB result
+      setFavoriteLocalIds((prev) => {
+        const inSet = prev.includes(recipe.id);
+        if (nowFav && !inSet) return [...prev, recipe.id];
+        if (!nowFav && inSet) return prev.filter((x) => x !== recipe.id);
+        return prev;
+      });
+    } catch (err) {
+      console.error("Favorite (local) error:", err);
+      setFavoriteErr(err.message || "Failed to update favorites");
+
+      // revert optimistic update
+      setFavoriteLocalIds((prev) =>
+        isFav ? [...prev, recipe.id] : prev.filter((x) => x !== recipe.id)
+      );
+    }
+  }
+
+
+  // AI recipes: snapshot name/ingredients/steps, recipe_id = null
+  async function handleToggleFavoriteAi(recipe, key) {
+    setFavoriteErr(null);
+    const isFav = favoriteAiKeys.includes(key);
+
+    // optimistic UI update (keys)
+    setFavoriteAiKeys((prev) =>
+      isFav ? prev.filter((x) => x !== key) : [...prev, key]
+    );
+
+    try {
+      const nowFav = await toggleFavoriteAiSnapshot(recipe);
+
+      setFavoriteAiKeys((prev) => {
+        const inSet = prev.includes(key);
+        if (nowFav && !inSet) return [...prev, key];
+        if (!nowFav && inSet) return prev.filter((x) => x !== key);
+        return prev;
+      });
+
+      setFavoriteAiNames((prev) => {
+        const name = recipe.name || "";
+        const inSet = prev.includes(name);
+        if (nowFav && !inSet) return [...prev, name];
+        if (!nowFav && inSet) return prev.filter((n) => n !== name);
+        return prev;
+      });
+    } catch (err) {
+      console.error("Favorite (AI) error:", err);
+      setFavoriteErr(err.message || "Failed to update favorites");
+
+      // revert optimistic update
+      setFavoriteAiKeys((prev) =>
+        isFav ? [...prev, key] : prev.filter((x) => x !== key)
+      );
+    }
+  }
+
+
+
 
   // popover close handlers
   useEffect(() => {
@@ -628,56 +799,141 @@ export default function Search() {
         {/* ==== AI Recipe Suggestions (Section 4) ==== */}
         {(aiLoading || aiErr || aiRecipes.length > 0) && (
           <section style={{ marginTop: 12 }}>
-            <div style={{ ...S.card, borderColor: '#c7d2fe', background: '#eef2ff' }}>
-              <div style={{ fontWeight: 800, marginBottom: 6 }}>AI Recipe Suggestions</div>
+            <div style={{ ...S.card, borderColor: "#c7d2fe", background: "#eef2ff" }}>
+              <div style={{ fontWeight: 800, marginBottom: 6 }}>
+                AI Recipe Suggestions
+              </div>
+
               {aiLoading && <div>Generating…</div>}
               {aiErr && <div style={S.error}>{aiErr}</div>}
+
               {!aiLoading && !aiErr && aiRecipes.length > 0 && (
-                <div style={{ display: 'grid', gap: 12 }}>
-                  {aiRecipes.map((r, i) => (
-                    <article key={i} style={{ ...S.card, borderColor: '#cbd5e1' }}>
-                      <div style={S.title}>{r.name}</div>
+                <div style={{ display: "grid", gap: 12 }}>
+                  {aiRecipes.map((r, i) => {
+                    const key = `ai:${i}:${r.name || ""}`;
+                    const isFavorite =
+                      favoriteAiKeys.includes(key) ||
+                      favoriteAiNames.includes(r.name || "");
+                    const menuKey = `ai-menu:${i}`;
 
-                      {/* Optional metadata if present */}
-                      <div style={S.meta}>
-                        {typeof r.total_time_minutes === 'number' && <span><ClockIcon /> {r.total_time_minutes}m</span>}
-                        {r.servings && <span>Serves {r.servings}</span>}
-                        {r.cuisine && <span>{r.cuisine}</span>}
-                        {r.diet && <span>{r.diet}</span>}
-                        {Array.isArray(r.tags) && r.tags.slice(0,4).map(t => <span key={t} style={S.tag}>{t}</span>)}
-                      </div>
+                    return (
+                      <article
+                        key={i}
+                        style={{ ...S.card, borderColor: "#cbd5e1" }}
+                      >
+                        {/* top row: title/meta + 3-dot menu */}
+                        <div
+                          style={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            justifyContent: "space-between",
+                            gap: 8,
+                          }}
+                        >
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={S.title}>{r.name}</div>
 
-                      {r.description && <p style={{ ...S.details, marginTop: 8 }}>{r.description}</p>}
+                            {/* Optional metadata if present */}
+                            <div style={S.meta}>
+                              {typeof r.total_time_minutes === "number" && (
+                                <span>
+                                  <ClockIcon /> {r.total_time_minutes}m
+                                </span>
+                              )}
+                              {r.servings && <span>Serves {r.servings}</span>}
+                              {r.cuisine && <span>{r.cuisine}</span>}
+                              {r.diet && <span>{r.diet}</span>}
+                              {Array.isArray(r.tags) &&
+                                r.tags.slice(0, 4).map((t) => (
+                                  <span key={t} style={S.tag}>
+                                    {t}
+                                  </span>
+                                ))}
+                              {isFavorite && (
+                                <span style={S.tag}>★ Favorite</span>
+                              )}
+                            </div>
+                          </div>
 
-                      {!!r.ingredients?.length && (
-                        <>
-                          <div style={S.subTitle}>Ingredients</div>
-                          <ul>
-                            {r.ingredients.map((x, idx) => {
-                              if (typeof x === 'string') {
-                                return <li key={idx}>{x}</li>;
-                              }
-                              const qty = (x?.quantity ?? '') !== '' ? `${x.quantity} ` : '';
-                              const unit = x?.unit ? `${x.unit} ` : '';
-                              const name = x?.ingredient || '';
-                              const prep = x?.prep ? `, ${x.prep}` : '';
-                              const notes = x?.notes ? ` (${x.notes})` : '';
-                              return <li key={idx}>{`${qty}${unit}${name}${prep}${notes}`.trim()}</li>;
-                            })}
-                          </ul>
-                        </>
-                      )}
+                          {/* 3-dot menu */}
+                          <div style={S.kebabWrap}>
+                            <button
+                              type="button"
+                              style={S.kebabBtn}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setOpenMenuKey((cur) =>
+                                  cur === menuKey ? null : menuKey
+                                );
+                              }}
+                              aria-label="More options"
+                            >
+                              <DotsIcon />
+                            </button>
 
-                      {!!r.steps?.length && (
-                        <>
-                          <div style={S.subTitle}>Steps</div>
-                          <ol>
-                            {r.steps.map((x, idx) => <li key={idx}>{x}</li>)}
-                          </ol>
-                        </>
-                      )}
-                    </article>
-                  ))}
+                            {openMenuKey === menuKey && (
+                              <div style={S.kebabMenu}>
+                                <button
+                                  type="button"
+                                  style={S.kebabItem}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    await handleToggleFavoriteAi(r, key);
+                                    setOpenMenuKey(null);
+                                  }}
+                                >
+                                  {isFavorite ? "Remove favorite" : "Favorite"}
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {r.description && (
+                          <p style={{ ...S.details, marginTop: 8 }}>
+                            {r.description}
+                          </p>
+                        )}
+
+                        {!!r.ingredients?.length && (
+                          <>
+                            <div style={S.subTitle}>Ingredients</div>
+                            <ul>
+                              {r.ingredients.map((x, idx) => {
+                                if (typeof x === "string") {
+                                  return <li key={idx}>{x}</li>;
+                                }
+                                const qty =
+                                  (x?.quantity ?? "") !== ""
+                                    ? `${x.quantity} `
+                                    : "";
+                                const unit = x?.unit ? `${x.unit} ` : "";
+                                const name = x?.ingredient || "";
+                                const prep = x?.prep ? `, ${x.prep}` : "";
+                                const notes = x?.notes ? ` (${x.notes})` : "";
+                                return (
+                                  <li key={idx}>
+                                    {`${qty}${unit}${name}${prep}${notes}`.trim()}
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </>
+                        )}
+
+                        {!!r.steps?.length && (
+                          <>
+                            <div style={S.subTitle}>Steps</div>
+                            <ol>
+                              {r.steps.map((x, idx) => (
+                                <li key={idx}>{x}</li>
+                              ))}
+                            </ol>
+                          </>
+                        )}
+                      </article>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -704,78 +960,137 @@ export default function Search() {
             <div style={{ ...S.card, textAlign: "center" }}>No results. Try different keywords or filters.</div>
           )}
 
-          {results.items.map((r) => (
-            <article key={r.id} style={S.rCard}>
-              <div style={S.title} onClick={() => openDetails(r.id)}>
-                {highlight(r.name, dq)}
-              </div>
-              <div style={S.meta}>
-                <span><ClockIcon /> {r.minutes}m</span>
-                {r.rating != null && <span>★ {r.rating}</span>}
-                {!!r.popularity && <span>❤ {r.popularity}</span>}
-                {r.cuisine && <span>{r.cuisine}</span>}
-                {r.diet && <span>{r.diet}</span>}
-              </div>
+          {results.items.map((r) => {
+            const isFavorite = favoriteLocalIds.includes(r.id);
+            const menuKey = `local:${r.id}`;
 
-              {!!r.ingredients?.length && (
-                <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
-                  {r.ingredients.slice(0, 12).map((ing) => (
-                    <span key={ing} style={S.tag}>{ing}</span>
-                  ))}
-                </div>
-              )}
+            return (
+              <article key={r.id} style={S.rCard}>
+                {/* top row: title/meta on the left, 3-dot menu on the right */}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    gap: 8,
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={S.title} onClick={() => openDetails(r.id)}>
+                      {highlight(r.name, dq)}
+                    </div>
+                    <div style={S.meta}>
+                      <span><ClockIcon /> {r.minutes}m</span>
+                      {r.rating != null && <span>★ {r.rating}</span>}
+                      {!!r.popularity && <span>❤ {r.popularity}</span>}
+                      {r.cuisine && <span>{r.cuisine}</span>}
+                      {r.diet && <span>{r.diet}</span>}
+                      {isFavorite && <span style={S.tag}>★ Favorite</span>}
+                    </div>
+                  </div>
 
-              {r.description && (
-                <p style={{ ...S.details, marginTop: 8 }}>
-                  {highlight(r.description.slice(0, 240), dq)}{r.description.length > 240 ? "…" : ""}
-                </p>
-              )}
+                  {/* 3-dot menu */}
+                  <div style={S.kebabWrap}>
+                    <button
+                      type="button"
+                      style={S.kebabBtn}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setOpenMenuKey((cur) => (cur === menuKey ? null : menuKey));
+                      }}
+                      aria-label="More options"
+                    >
+                      <DotsIcon />
+                    </button>
 
-              <div style={S.actionRow}>
-                <button style={S.btn} onClick={() => openDetails(r.id)}>
-                  {openId === r.id ? "Hide details" : "Show full ingredients & instructions"}
-                </button>
-                {!!r.ingredients?.length && (
-                  <button
-                    style={S.btn}
-                    onClick={() => copy(r.ingredients.join("\n"))}
-                    title="Copy ingredients to clipboard"
-                  >
-                    Copy ingredients
-                  </button>
-                )}
-              </div>
-
-              {openId === r.id && (
-                <div style={S.drawer}>
-                  {!detail || detail.id !== r.id ? (
-                    <div style={{ color: "#64748b" }}>Loading details…</div>
-                  ) : (
-                    <>
-                      {!!detail.ingredients?.length && (
-                        <>
-                          <div style={S.subTitle}>Ingredients</div>
-                          <ul>
-                            {detail.ingredients.map((x, i) => <li key={i}>{x}</li>)}
-                          </ul>
-                        </>
-                      )}
-                      {detail.steps && (
-                        <>
-                          <div style={S.subTitle}>Instructions</div>
-                          <p style={S.details}>{detail.steps}</p>
-                        </>
-                      )}
-                      <div style={S.actionRow}>
-                        <button style={S.btn} onClick={() => window.print()}>Print</button>
-                        <button style={S.btn} onClick={() => { setOpenId(null); setDetail(null); }}>Close</button>
+                    {openMenuKey === menuKey && (
+                      <div style={S.kebabMenu}>
+                        <button
+                          type="button"
+                          style={S.kebabItem}
+                          onClick={async (e) => {
+                            e.stopPropagation();
+                            await handleToggleFavoriteLocal(r);
+                            setOpenMenuKey(null);
+                          }}
+                        >
+                          {isFavorite ? "Remove favorite" : "Favorite"}
+                        </button>
                       </div>
-                    </>
+                    )}
+                  </div>
+                </div>
+
+                {/* the rest of your existing card stays the same */}
+                {!!r.ingredients?.length && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
+                    {r.ingredients.slice(0, 12).map((ing) => (
+                      <span key={ing} style={S.tag}>{ing}</span>
+                    ))}
+                  </div>
+                )}
+
+                {r.description && (
+                  <p style={{ ...S.details, marginTop: 8 }}>
+                    {highlight(r.description.slice(0, 240), dq)}
+                    {r.description.length > 240 ? "…" : ""}
+                  </p>
+                )}
+
+                <div style={S.actionRow}>
+                  <button style={S.btn} onClick={() => openDetails(r.id)}>
+                    {openId === r.id ? "Hide details" : "Show full ingredients & instructions"}
+                  </button>
+                  {!!r.ingredients?.length && (
+                    <button
+                      style={S.btn}
+                      onClick={() => copy(r.ingredients.join("\n"))}
+                      title="Copy ingredients to clipboard"
+                    >
+                      Copy ingredients
+                    </button>
                   )}
                 </div>
-              )}
-            </article>
-          ))}
+
+                {openId === r.id && (
+                  <div style={S.drawer}>
+                    {!detail || detail.id !== r.id ? (
+                      <div style={{ color: "#64748b" }}>Loading details…</div>
+                    ) : (
+                      <>
+                        {!!detail.ingredients?.length && (
+                          <>
+                            <div style={S.subTitle}>Ingredients</div>
+                            <ul>
+                              {detail.ingredients.map((x, i) => <li key={i}>{x}</li>)}
+                            </ul>
+                          </>
+                        )}
+                        {detail.steps && (
+                          <>
+                            <div style={S.subTitle}>Instructions</div>
+                            <p style={S.details}>{detail.steps}</p>
+                          </>
+                        )}
+                        <div style={S.actionRow}>
+                          <button style={S.btn} onClick={() => window.print()}>Print</button>
+                          <button
+                            style={S.btn}
+                            onClick={() => {
+                              setOpenId(null);
+                              setDetail(null);
+                            }}
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </article>
+            );
+          })}
         </div>
       </section>
     </div>
