@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useDropzone } from "react-dropzone";
 
-const API_KEY = "AIzaSyCdM41nbWrJku8ZDJ-ZxtYc2WnoF9uxpEA";
+const API_KEY = "AIzaSyAhjNVx1ebYkFH0ipLVXXnv6SlekC76QHg";
 
 
 function fileToBase64(file) {
@@ -34,7 +34,7 @@ async function detectWithFetch(file) {
   };
 
   const resp = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${API_KEY}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=${API_KEY}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

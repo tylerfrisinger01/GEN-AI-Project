@@ -6,7 +6,13 @@ import {
   toggleFavoriteAiSnapshot,
   listLocalFavorites,
   listAiFavorites,
+  addFavoriteLocal,
+  addFavoriteAiSnapshot,
+  removeFavoriteAiByName,
+  removeFavoriteLocal,
 } from "../data/favorites";
+
+import { generateFavoriteImage } from "../api/favoritesImageGeneration";
 
 
 /**
@@ -467,71 +473,148 @@ export default function Search() {
   }
 
     // Local DB recipes: save recipe_id only, everything else null
+  // async function handleToggleFavoriteLocal(recipe) {
+  //   setFavoriteErr(null);
+  //   const isFav = favoriteLocalIds.includes(recipe.id);
+
+  //   // optimistic UI update
+  //   setFavoriteLocalIds((prev) =>
+  //     isFav ? prev.filter((x) => x !== recipe.id) : [...prev, recipe.id]
+  //   );
+
+  //   try {
+  //     const nowFav = await toggleFavoriteLocal(recipe.id); // uses /data/favorites.js
+
+  //     // make sure state matches DB result
+  //     setFavoriteLocalIds((prev) => {
+  //       const inSet = prev.includes(recipe.id);
+  //       if (nowFav && !inSet) return [...prev, recipe.id];
+  //       if (!nowFav && inSet) return prev.filter((x) => x !== recipe.id);
+  //       return prev;
+  //     });
+  //   } catch (err) {
+  //     console.error("Favorite (local) error:", err);
+  //     setFavoriteErr(err.message || "Failed to update favorites");
+
+  //     // revert optimistic update
+  //     setFavoriteLocalIds((prev) =>
+  //       isFav ? [...prev, recipe.id] : prev.filter((x) => x !== recipe.id)
+  //     );
+  //   }
+  // }
+
+
   async function handleToggleFavoriteLocal(recipe) {
-    setFavoriteErr(null);
-    const isFav = favoriteLocalIds.includes(recipe.id);
+  setFavoriteErr(null);
+  const isFav = favoriteLocalIds.includes(recipe.id);
 
-    // optimistic UI update
-    setFavoriteLocalIds((prev) =>
-      isFav ? prev.filter((x) => x !== recipe.id) : [...prev, recipe.id]
-    );
+  // optimistic UI update
+  setFavoriteLocalIds((prev) =>
+    isFav ? prev.filter((x) => x !== recipe.id) : [...prev, recipe.id]
+  );
 
-    try {
-      const nowFav = await toggleFavoriteLocal(recipe.id); // uses /data/favorites.js
+  try {
+    if (!isFav) {
+      // ADD favorite and get the row
+      const fav = await addFavoriteLocal(recipe.id); // { id, recipe_id, ... }
 
-      // make sure state matches DB result
-      setFavoriteLocalIds((prev) => {
-        const inSet = prev.includes(recipe.id);
-        if (nowFav && !inSet) return [...prev, recipe.id];
-        if (!nowFav && inSet) return prev.filter((x) => x !== recipe.id);
-        return prev;
-      });
-    } catch (err) {
-      console.error("Favorite (local) error:", err);
-      setFavoriteErr(err.message || "Failed to update favorites");
-
-      // revert optimistic update
-      setFavoriteLocalIds((prev) =>
-        isFav ? [...prev, recipe.id] : prev.filter((x) => x !== recipe.id)
-      );
+      // Generate image using local recipe details
+      // Use recipe.name + recipe.ingredients (array of strings)
+      generateFavoriteImage(fav.id, recipe.name, recipe.ingredients);
+    } else {
+      // REMOVE favorite
+      await removeFavoriteLocal(recipe.id);
     }
+  } catch (err) {
+    console.error("Favorite (local) error:", err);
+    setFavoriteErr(err.message || "Failed to update favorites");
+
+    // revert optimistic UI on error
+    setFavoriteLocalIds((prev) =>
+      isFav ? [...prev, recipe.id] : prev.filter((x) => x !== recipe.id)
+    );
   }
+}
+
 
 
   // AI recipes: snapshot name/ingredients/steps, recipe_id = null
+  // async function handleToggleFavoriteAi(recipe, key) {
+  //   setFavoriteErr(null);
+  //   const isFav = favoriteAiKeys.includes(key);
+
+  //   // optimistic UI update (keys)
+  //   setFavoriteAiKeys((prev) =>
+  //     isFav ? prev.filter((x) => x !== key) : [...prev, key]
+  //   );
+
+  //   try {
+  //     const nowFav = await toggleFavoriteAiSnapshot(recipe);
+
+  //     setFavoriteAiKeys((prev) => {
+  //       const inSet = prev.includes(key);
+  //       if (nowFav && !inSet) return [...prev, key];
+  //       if (!nowFav && inSet) return prev.filter((x) => x !== key);
+  //       return prev;
+  //     });
+
+  //     setFavoriteAiNames((prev) => {
+  //       const name = recipe.name || "";
+  //       const inSet = prev.includes(name);
+  //       if (nowFav && !inSet) return [...prev, name];
+  //       if (!nowFav && inSet) return prev.filter((n) => n !== name);
+  //       return prev;
+  //     });
+  //   } catch (err) {
+  //     console.error("Favorite (AI) error:", err);
+  //     setFavoriteErr(err.message || "Failed to update favorites");
+
+  //     // revert optimistic update
+  //     setFavoriteAiKeys((prev) =>
+  //       isFav ? [...prev, key] : prev.filter((x) => x !== key)
+  //     );
+  //   }
+  // }
+
+
   async function handleToggleFavoriteAi(recipe, key) {
     setFavoriteErr(null);
-    const isFav = favoriteAiKeys.includes(key);
 
-    // optimistic UI update (keys)
+    const name = recipe.name || "";
+    const isFav =
+      favoriteAiKeys.includes(key) || favoriteAiNames.includes(name);
+
+    // optimistic UI update
     setFavoriteAiKeys((prev) =>
       isFav ? prev.filter((x) => x !== key) : [...prev, key]
     );
+    setFavoriteAiNames((prev) =>
+      isFav ? prev.filter((n) => n !== name) : [...prev, name]
+    );
 
     try {
-      const nowFav = await toggleFavoriteAiSnapshot(recipe);
+      if (!isFav) {
+        // ADD favorite in Supabase and get the row (includes id)
+        const fav = await addFavoriteAiSnapshot(recipe); // { id, name, ingredients, ... }
 
-      setFavoriteAiKeys((prev) => {
-        const inSet = prev.includes(key);
-        if (nowFav && !inSet) return [...prev, key];
-        if (!nowFav && inSet) return prev.filter((x) => x !== key);
-        return prev;
-      });
-
-      setFavoriteAiNames((prev) => {
-        const name = recipe.name || "";
-        const inSet = prev.includes(name);
-        if (nowFav && !inSet) return [...prev, name];
-        if (!nowFav && inSet) return prev.filter((n) => n !== name);
-        return prev;
-      });
+        // Fire-and-forget: ask backend to generate + attach an image
+        // No need to await if you don't want to block the UI;
+        // you *can* await if you want to react to success/failure.
+        generateFavoriteImage(fav.id, recipe.name, recipe.ingredients);
+      } else {
+        // REMOVE favorite
+        await removeFavoriteAiByName(name);
+      }
     } catch (err) {
       console.error("Favorite (AI) error:", err);
       setFavoriteErr(err.message || "Failed to update favorites");
 
-      // revert optimistic update
+      // revert optimistic UI on error
       setFavoriteAiKeys((prev) =>
         isFav ? [...prev, key] : prev.filter((x) => x !== key)
+      );
+      setFavoriteAiNames((prev) =>
+        isFav ? [...prev, name] : prev.filter((n) => n !== name)
       );
     }
   }
@@ -811,9 +894,7 @@ export default function Search() {
                 <div style={{ display: "grid", gap: 12 }}>
                   {aiRecipes.map((r, i) => {
                     const key = `ai:${i}:${r.name || ""}`;
-                    const isFavorite =
-                      favoriteAiKeys.includes(key) ||
-                      favoriteAiNames.includes(r.name || "");
+                    const isFavorite = favoriteAiKeys.includes(key) || favoriteAiNames.includes(r.name || "");
                     const menuKey = `ai-menu:${i}`;
 
                     return (

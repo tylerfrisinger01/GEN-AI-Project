@@ -2,10 +2,24 @@
 const express = require('express');
 const sqlite = require('better-sqlite3');
 const path = require('path');
+require('dotenv').config();
 
 // LangChain / OpenAI
 const { ChatOpenAI } = require('@langchain/openai');
 const { SystemMessage, HumanMessage } = require('@langchain/core/messages');
+
+// Gemeni 
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { createClient } = require("@supabase/supabase-js");
+
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
 
 const app = express();
 
@@ -133,6 +147,112 @@ EXAMPLE INGREDIENT ENTRY:
     res.status(500).json({ error: String(err?.message || err) });
   }
 });
+
+
+// ---------------- Favorite Recipe Image Generation Endpoint ----------------
+app.post("/api/favorite-image", async (req, res) => {
+  try {
+    const { favorite_id, name, ingredients } = req.body || {};
+    if (!favorite_id) {
+      return res.status(400).json({ error: "favorite_id required" });
+    }
+
+    const image = await generateRecipeImage({ name, ingredients });
+    const url = await uploadFavoriteImageToSupabase({
+      favoriteId: favorite_id,
+      image,
+    });
+
+    res.json({ image_url: url });
+  } catch (err) {
+    console.error("Error generating favorite image:", err);
+    res.status(500).json({ error: String(err?.message || err) });
+  }
+});
+
+
+// ---------------- Favorite Recipe Image Generation helper functions ----------------
+async function generateRecipeImage({ name, ingredients }) {
+  // Build a nice prompt from name + ingredients
+  const ingredientList = Array.isArray(ingredients)
+    ? ingredients
+        .map((x) => {
+          if (typeof x === "string") return x;
+          const nm = x.ingredient || "";
+          const qty = x.quantity ? `${x.quantity} ${x.unit || ""}` : "";
+          return `${qty} ${nm}`.trim();
+        })
+        .filter(Boolean)
+        .join(", ")
+    : "";
+
+  const prompt = `
+    Generate a high-quality, realistic photo-style image of the FINAL cooked dish.
+
+    Recipe name: "${name || "Unknown dish"}"
+    Key ingredients: ${ingredientList || "not specified"}
+
+    Requirements:
+    - Show a single plated serving of the finished dish.
+    - Neutral, soft background (no text, no logos, no hands).
+    - Bright, appetizing lighting.
+    - No text overlays or watermarks.
+    `;
+
+  // Use a Gemini model that supports image output
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash-image", 
+    generationConfig: {
+      responseModalities: ["IMAGE"], // only image back
+    },
+  });
+
+  const response = await model.generateContent(prompt);
+  console.log("Gemini favorite image response:", response.response);
+  const parts =
+    response?.response?.candidates?.[0]?.content?.parts || []; // adjust this if getting weird errors so it fits the response shape
+
+  const imagePart = parts.find((p) => p.inlineData);
+
+  if (!imagePart || !imagePart.inlineData?.data) {
+    throw new Error("No image data returned from Gemini");
+  }
+
+  // inlineData: { mimeType, data (base64) }
+  return imagePart.inlineData; // { mimeType, data }
+}
+
+
+async function uploadFavoriteImageToSupabase({ favoriteId, image }) {
+  const buffer = Buffer.from(image.data, "base64");
+  const ext = image.mimeType === "image/png" ? "png" : "jpg";
+  const path = `favorites/${favoriteId}.${ext}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("recipe-images")
+    .upload(path, buffer, {
+      contentType: image.mimeType || "image/jpeg",
+      upsert: true,
+    });
+
+  if (uploadError) throw uploadError;
+
+  const {
+    data: { publicUrl },
+  } = supabase.storage.from("recipe-images").getPublicUrl(path);
+
+  // update the favorites row
+  const { error: updateError } = await supabase
+    .from("favorites")
+    .update({ image_url: publicUrl })
+    .eq("id", favoriteId);
+
+  if (updateError) throw updateError;
+
+  return publicUrl;
+}
+
+
 
 
 
