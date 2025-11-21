@@ -39,7 +39,7 @@ const db = sqlite(DB_PATH, { readonly: true });
 
 app.use(express.json());
 
-// permissive CORS for local dev
+
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -87,7 +87,7 @@ app.post('/api/ai-search', async (req, res) => {
       prompt
     } = req.body || {};
 
-    // Build userPrompt if not provided
+    
     const userPrompt = typeof prompt === 'string' && prompt
       ? prompt
       : (() => {
@@ -143,7 +143,7 @@ EXAMPLE INGREDIENT ENTRY:
 
     const systemMsg = new SystemMessage(systemPrompt || defaultSystemPrompt);
 
-    // Redundantly include pantry in human message to keep it fresh in context
+    
     const pantryLine = pantry?.length
       ? `Pantry items available for substitution: ${pantry.join(', ')}`
       : 'Pantry items available for substitution: (none)';
@@ -199,12 +199,12 @@ app.post("/api/ai-image", async (req, res) => {
 });
 
 
-// ---------------- Favorite Recipe Image Generation helper functions ----------------
+// ---------------- Saved Recipe Image Generation helper functions ----------------
 async function generateRecipeImage({ name, ingredients }) {
   if (!genAI) {
     throw new Error("GEMINI_API_KEY is not configured.");
   }
-  // Build a nice prompt from name + ingredients
+  
   const ingredientList = Array.isArray(ingredients)
     ? ingredients
         .map((x) => {
@@ -234,7 +234,7 @@ async function generateRecipeImage({ name, ingredients }) {
   
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      // Use a Gemini model that supports image output
+      
       const model = genAI.getGenerativeModel({
         model: "gemini-2.5-flash-image", 
         generationConfig: {
@@ -245,27 +245,27 @@ async function generateRecipeImage({ name, ingredients }) {
       const response = await model.generateContent(prompt);
       console.log(`Gemini image response (attempt ${attempt + 1}/${MAX_RETRIES}):`, response.response);
       const parts =
-        response?.response?.candidates?.[0]?.content?.parts || []; // adjust this if getting weird errors so it fits the response shape
+        response?.response?.candidates?.[0]?.content?.parts || []; 
 
       const imagePart = parts.find((p) => p.inlineData);
 
       if (!imagePart || !imagePart.inlineData?.data) {
         if (attempt < MAX_RETRIES - 1) {
           console.log(`No image data returned, retrying... (attempt ${attempt + 1}/${MAX_RETRIES})`);
-          // Wait a bit before retrying (exponential backoff)
+          // Wait a bit before retrying 
           await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
           continue;
         }
         throw new Error("No image data returned from Gemini after 3 attempts");
       }
 
-      // inlineData: { mimeType, data (base64) }
-      return imagePart.inlineData; // { mimeType, data }
+      
+      return imagePart.inlineData; 
     } catch (error) {
       // If it's the "No image data" error and we have retries left, continue the loop
       if (error.message.includes("No image data") && attempt < MAX_RETRIES - 1) {
         console.log(`Image generation failed, retrying... (attempt ${attempt + 1}/${MAX_RETRIES}):`, error.message);
-        // Wait a bit before retrying (exponential backoff)
+        // Wait a bit before retrying 
         await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
         continue;
       }
@@ -322,7 +322,7 @@ app.get('/api/health', (req, res) => {
   }
 });
 
-/** Build FTS WHERE clause */
+
 function buildFtsWhere(q) {
   if (!q) return { where: '1=1', params: {} };
   const words = q.trim().split(/\s+/).slice(0, 6).map(w => w.replace(/"/g, ''));
@@ -330,7 +330,7 @@ function buildFtsWhere(q) {
   return { where: 'recipes_fts MATCH :match', params: { match: matchExpr } };
 }
 
-/** Sort clause (use computed "score" for relevance) */
+
 function orderClause(sort) {
   switch ((sort || '').toLowerCase()) {
     case 'rating':       return 'ORDER BY r.rating DESC';

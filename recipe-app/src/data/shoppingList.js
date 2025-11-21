@@ -79,7 +79,6 @@ export async function addShoppingItemsBulk(items = []) {
   return data
 }
 
-/** Update arbitrary fields: { qty, notes, checked, name } */
 export async function updateShoppingItem(id, patch) {
   const { data, error } = await supabase
     .from('shopping_items')
@@ -112,7 +111,7 @@ export async function removeShoppingItem(id) {
   if (error) throw error
 }
 
-/** Bulk: clear all checked items */
+/** clear all checked items */
 export async function clearCheckedShopping() {
   const { error } = await supabase
     .from('shopping_items')
@@ -121,7 +120,7 @@ export async function clearCheckedShopping() {
   if (error) throw error
 }
 
-/** Optional convenience: move one checked item to pantry then delete it */
+
 export async function moveShoppingItemToPantry(id) {
   // read the item
   const { data: item, error: readErr } = await supabase
@@ -147,7 +146,6 @@ export async function moveShoppingItemToPantry(id) {
 
 /** Clear all items */
 export async function clearShopping() {
-  // Supabase prevents delete() with no filters; select ids first
   const { data: rows, error: readErr } = await supabase
     .from('shopping_items')
     .select('id')

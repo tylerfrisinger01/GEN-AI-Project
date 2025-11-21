@@ -15,7 +15,6 @@ export async function generateSavedImage(savedId, name, ingredients) {
     return json.image_url;
   } catch (err) {
     console.error("generateSavedImage error:", err);
-    // you can choose to surface this or just fail silently
     return null;
   }
 }

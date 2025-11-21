@@ -12,7 +12,7 @@ import { supabase } from '../lib/supaBaseClient'
  *  created_at timestamptz
  */
 
-/** List all saved recipes (local + AI) */
+/** List all saved recipes */
 export async function listSaved(limit = 200) {
   const { data, error } = await supabase
     .from('favorites')
@@ -24,7 +24,7 @@ export async function listSaved(limit = 200) {
   return data
 }
 
-/** List saved local recipes (by recipe_id only) */
+/** List saved local recipes  */
 export async function listLocalSaved(limit = 200) {
   const { data, error } = await supabase
     .from('favorites')
@@ -34,10 +34,10 @@ export async function listLocalSaved(limit = 200) {
     .limit(limit)
 
   if (error) throw error
-  return data // [{recipe_id, created_at}, ...]
+  return data 
 }
 
-/** List saved AI recipe snapshots */
+/** List saved AI recipe  */
 export async function listAiSaved(limit = 200) {
   const { data, error } = await supabase
     .from('favorites')
@@ -47,10 +47,10 @@ export async function listAiSaved(limit = 200) {
     .limit(limit)
 
   if (error) throw error
-  return data // [{name, ingredients, instructions, created_at}, ...]
+  return data 
 }
 
-/** Boolean: is this local recipe (by id) saved? */
+/**  is this local recipe saved */
 export async function isSavedLocal(recipeId) {
   const { data, error } = await supabase
     .from('favorites')
@@ -63,7 +63,7 @@ export async function isSavedLocal(recipeId) {
   return !!data
 }
 
-/** Boolean: is this AI recipe (by name) saved? */
+/** is this AI recipe saved */
 export async function isSavedAiByName(name) {
   const { data, error } = await supabase
     .from('favorites')
@@ -76,7 +76,7 @@ export async function isSavedAiByName(name) {
   return !!data
 }
 
-/** Add saved local recipe (recipe in your SQLite DB) */
+/** Add saved local recipe */
 export async function addSavedLocal(recipeId) {
   const { data, error } = await supabase
     .from('favorites')
@@ -129,7 +129,7 @@ export async function addSavedAiSnapshot(recipe) {
   return data
 }
 
-/** Remove saved AI recipe by name (simple heuristic) */
+/** Remove saved AI recipe by name  */
 export async function removeSavedAiByName(name) {
   const { error } = await supabase
     .from('favorites')

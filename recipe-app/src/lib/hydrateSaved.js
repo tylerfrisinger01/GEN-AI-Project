@@ -7,6 +7,7 @@ function cleanInstructionList(list) {
   return list
     .map((step) =>
       typeof step === "string"
+        // eslint-disable-next-line no-useless-escape
         ? step.replace(/^\s*(?:\d+[\.\)]|-)\s*/, "").trim()
         : ""
     )
@@ -37,7 +38,7 @@ function parseBracketedList(raw) {
         return parsed;
       }
     } catch {
-      // ignore parse failures and try other strategies
+      
     }
   }
 

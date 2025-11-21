@@ -64,7 +64,7 @@ async function generateSearchResponse(userPrompt, systemPrompt = null) { // for 
     ];
 
     const response = await model.invoke(messages);
-    // LangChain returns an object with text
+    
     return response.text ?? response;
   } catch (error) {
     console.error("Error invoking model:", error);
