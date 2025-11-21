@@ -230,27 +230,52 @@ async function generateRecipeImage({ name, ingredients }) {
     - No text overlays or watermarks.
     `;
 
-  // Use a Gemini model that supports image output
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-image", 
-    generationConfig: {
-      responseModalities: ["IMAGE"], // only image back
-    },
-  });
+  const MAX_RETRIES = 3;
+  
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      // Use a Gemini model that supports image output
+      const model = genAI.getGenerativeModel({
+        model: "gemini-2.5-flash-image", 
+        generationConfig: {
+          responseModalities: ["IMAGE"], // only image back
+        },
+      });
 
-  const response = await model.generateContent(prompt);
-  console.log("Gemini saved image response:", response.response);
-  const parts =
-    response?.response?.candidates?.[0]?.content?.parts || []; // adjust this if getting weird errors so it fits the response shape
+      const response = await model.generateContent(prompt);
+      console.log(`Gemini image response (attempt ${attempt + 1}/${MAX_RETRIES}):`, response.response);
+      const parts =
+        response?.response?.candidates?.[0]?.content?.parts || []; // adjust this if getting weird errors so it fits the response shape
 
-  const imagePart = parts.find((p) => p.inlineData);
+      const imagePart = parts.find((p) => p.inlineData);
 
-  if (!imagePart || !imagePart.inlineData?.data) {
-    throw new Error("No image data returned from Gemini");
+      if (!imagePart || !imagePart.inlineData?.data) {
+        if (attempt < MAX_RETRIES - 1) {
+          console.log(`No image data returned, retrying... (attempt ${attempt + 1}/${MAX_RETRIES})`);
+          // Wait a bit before retrying (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          continue;
+        }
+        throw new Error("No image data returned from Gemini after 3 attempts");
+      }
+
+      // inlineData: { mimeType, data (base64) }
+      return imagePart.inlineData; // { mimeType, data }
+    } catch (error) {
+      // If it's the "No image data" error and we have retries left, continue the loop
+      if (error.message.includes("No image data") && attempt < MAX_RETRIES - 1) {
+        console.log(`Image generation failed, retrying... (attempt ${attempt + 1}/${MAX_RETRIES}):`, error.message);
+        // Wait a bit before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+        continue;
+      }
+      // If it's a different error or we're out of retries, throw it
+      throw error;
+    }
   }
-
-  // inlineData: { mimeType, data (base64) }
-  return imagePart.inlineData; // { mimeType, data }
+  
+  // This should never be reached, but just in case
+  throw new Error("Failed to generate image after all retry attempts");
 }
 
 

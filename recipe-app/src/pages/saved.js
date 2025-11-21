@@ -263,8 +263,9 @@ const S = {
   row: { display: "flex", justifyContent: "space-between", marginBottom: 12 },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 280px))",
     gap: 16,
+    justifyContent: "center",
   },
   card: {
     border: "1px solid #e2e8f0",
@@ -273,6 +274,10 @@ const S = {
     background: "#ffffff",
     cursor: "pointer",
     transition: "border-color 0.2s ease, box-shadow 0.2s ease",
+    width: "100%",
+    maxWidth: "100%",
+    boxSizing: "border-box",
+    overflow: "hidden",
   },
   img: {
     width: "100%",
