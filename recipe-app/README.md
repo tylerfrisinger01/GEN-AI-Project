@@ -2,6 +2,24 @@
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
+## Environment variables
+
+Copy `.env.example` to `.env` in this directory and provide the required values before running either the API server or the web client.
+
+| Variable | Purpose |
+| --- | --- |
+| `OPENAI_API_KEY` | Server-side access to OpenAI for recipe generation |
+| `GEMINI_API_KEY` | Server-side Gemini image generation |
+| `SUPABASE_URL` | Supabase project URL for the API worker |
+| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service role key for server uploads |
+| `REACT_APP_OPENAI_API_KEY` | Client-side LangChain interactions |
+| `REACT_APP_GEMINI_API_KEY` | Client-side Identify page requests |
+| `REACT_APP_SUPABASE_URL` | Client-side Supabase project URL |
+| `REACT_APP_SUPABASE_ANON_KEY` | Client-side Supabase anon key |
+| `REACT_APP_API_BASE` | Optional override for the API base URL (defaults to `http://localhost:4000`) |
+
+> **Note:** CRA only exposes variables prefixed with `REACT_APP_` to the browser. Keep server-only secrets (OpenAI, Gemini, Supabase service role) outside of that prefix so they are not bundled in the client build.
+
 ## Available Scripts
 
 In the project directory, you can run:

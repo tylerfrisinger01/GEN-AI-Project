@@ -1,10 +1,9 @@
-
-export async function generateFavoriteImage(favoriteId, name, ingredients) {
+export async function generateSavedImage(savedId, name, ingredients) {
   try {
-    const res = await fetch("http://localhost:4000/api/favorite-image", {
+    const res = await fetch("http://localhost:4000/api/saved-image", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ favorite_id: favoriteId, name, ingredients }),
+      body: JSON.stringify({ saved_id: savedId, name, ingredients }),
     });
 
     if (!res.ok) {
@@ -15,7 +14,7 @@ export async function generateFavoriteImage(favoriteId, name, ingredients) {
     const json = await res.json();
     return json.image_url;
   } catch (err) {
-    console.error("generateFavoriteImage error:", err);
+    console.error("generateSavedImage error:", err);
     // you can choose to surface this or just fail silently
     return null;
   }

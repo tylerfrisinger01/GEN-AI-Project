@@ -2,17 +2,15 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { generateSearchRecipes } from "../api/aiSearch";
 import { getPantry } from "../data/pantry";
 import {
-  toggleFavoriteLocal,
-  toggleFavoriteAiSnapshot,
-  listLocalFavorites,
-  listAiFavorites,
-  addFavoriteLocal,
-  addFavoriteAiSnapshot,
-  removeFavoriteAiByName,
-  removeFavoriteLocal,
-} from "../data/favorites";
+  listLocalSaved,
+  listAiSaved,
+  addSavedLocal,
+  addSavedAiSnapshot,
+  removeSavedAiByName,
+  removeSavedLocal,
+} from "../data/saved";
 
-import { generateFavoriteImage } from "../api/favoritesImageGeneration";
+import { generateSavedImage } from "../api/savedImageGeneration";
 
 
 /**
@@ -261,11 +259,11 @@ export default function Search() {
   const [pantryItems, setPantryItems] = useState([]);
   const pantryLoadedRef = useRef(false);
 
-  const [favoriteLocalIds, setFavoriteLocalIds] = useState([]);      // recipe.id from local DB
-  const [favoriteAiKeys, setFavoriteAiKeys] = useState([]);          // synthetic keys for AI recipes
+  const [savedLocalIds, setSavedLocalIds] = useState([]);      // recipe.id from local DB
+  const [savedAiKeys, setSavedAiKeys] = useState([]);          // synthetic keys for AI recipes
   const [openMenuKey, setOpenMenuKey] = useState(null);              // which 3-dot menu is open
-  const [favoriteAiNames, setFavoriteAiNames] = useState([]);       // persisted AI favorites by name
-  const [favoriteErr, setFavoriteErr] = useState(null);
+  const [savedAiNames, setSavedAiNames] = useState([]);       // persisted AI recipes by name
+  const [savedErr, setSavedErr] = useState(null);
 
 
   const [openId, setOpenId] = useState(null);
@@ -293,33 +291,33 @@ export default function Search() {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadFavorites() {
+    async function loadSaved() {
       try {
-        const [localFavs, aiFavs] = await Promise.all([
-          listLocalFavorites(), // [{ recipe_id, created_at }]
-          listAiFavorites(),    // [{ name, ingredients, instructions, created_at }]
+        const [localSaved, aiSaved] = await Promise.all([
+          listLocalSaved(), // [{ recipe_id, created_at }]
+          listAiSaved(),    // [{ name, ingredients, instructions, created_at }]
         ]);
 
         if (cancelled) return;
 
-        setFavoriteLocalIds(
-          (localFavs || [])
+        setSavedLocalIds(
+          (localSaved || [])
             .map((f) => f.recipe_id)
             .filter((id) => id != null)
         );
 
-        setFavoriteAiNames(
-          (aiFavs || [])
+        setSavedAiNames(
+          (aiSaved || [])
             .map((f) => f.name)
             .filter(Boolean)
         );
       } catch (e) {
-        console.error("Error loading favorites:", e);
-        // optional: setFavoriteErr("Failed to load favorites");
+        console.error("Error loading saved recipes:", e);
+        // optional: setSavedErr("Failed to load saved recipes");
       }
     }
 
-    loadFavorites();
+    loadSaved();
     return () => {
       cancelled = true;
     };
@@ -473,148 +471,77 @@ export default function Search() {
   }
 
     // Local DB recipes: save recipe_id only, everything else null
-  // async function handleToggleFavoriteLocal(recipe) {
-  //   setFavoriteErr(null);
-  //   const isFav = favoriteLocalIds.includes(recipe.id);
+  async function handleToggleSavedLocal(recipe) {
+    setSavedErr(null);
+    const isSaved = savedLocalIds.includes(recipe.id);
 
-  //   // optimistic UI update
-  //   setFavoriteLocalIds((prev) =>
-  //     isFav ? prev.filter((x) => x !== recipe.id) : [...prev, recipe.id]
-  //   );
-
-  //   try {
-  //     const nowFav = await toggleFavoriteLocal(recipe.id); // uses /data/favorites.js
-
-  //     // make sure state matches DB result
-  //     setFavoriteLocalIds((prev) => {
-  //       const inSet = prev.includes(recipe.id);
-  //       if (nowFav && !inSet) return [...prev, recipe.id];
-  //       if (!nowFav && inSet) return prev.filter((x) => x !== recipe.id);
-  //       return prev;
-  //     });
-  //   } catch (err) {
-  //     console.error("Favorite (local) error:", err);
-  //     setFavoriteErr(err.message || "Failed to update favorites");
-
-  //     // revert optimistic update
-  //     setFavoriteLocalIds((prev) =>
-  //       isFav ? [...prev, recipe.id] : prev.filter((x) => x !== recipe.id)
-  //     );
-  //   }
-  // }
-
-
-  async function handleToggleFavoriteLocal(recipe) {
-  setFavoriteErr(null);
-  const isFav = favoriteLocalIds.includes(recipe.id);
-
-  // optimistic UI update
-  setFavoriteLocalIds((prev) =>
-    isFav ? prev.filter((x) => x !== recipe.id) : [...prev, recipe.id]
-  );
-
-  try {
-    if (!isFav) {
-      // ADD favorite and get the row
-      const fav = await addFavoriteLocal(recipe.id); // { id, recipe_id, ... }
-
-      // Generate image using local recipe details
-      // Use recipe.name + recipe.ingredients (array of strings)
-      generateFavoriteImage(fav.id, recipe.name, recipe.ingredients);
-    } else {
-      // REMOVE favorite
-      await removeFavoriteLocal(recipe.id);
-    }
-  } catch (err) {
-    console.error("Favorite (local) error:", err);
-    setFavoriteErr(err.message || "Failed to update favorites");
-
-    // revert optimistic UI on error
-    setFavoriteLocalIds((prev) =>
-      isFav ? [...prev, recipe.id] : prev.filter((x) => x !== recipe.id)
+    // optimistic UI update
+    setSavedLocalIds((prev) =>
+      isSaved ? prev.filter((x) => x !== recipe.id) : [...prev, recipe.id]
     );
+
+    try {
+      if (!isSaved) {
+        // ADD saved recipe and get the row
+        const saved = await addSavedLocal(recipe.id); // { id, recipe_id, ... }
+
+        // Generate image using local recipe details
+        // Use recipe.name + recipe.ingredients (array of strings)
+        generateSavedImage(saved.id, recipe.name, recipe.ingredients);
+      } else {
+        // REMOVE saved recipe
+        await removeSavedLocal(recipe.id);
+      }
+    } catch (err) {
+      console.error("Saved (local) error:", err);
+      setSavedErr(err.message || "Failed to update saved recipes");
+
+      // revert optimistic UI on error
+      setSavedLocalIds((prev) =>
+        isSaved ? [...prev, recipe.id] : prev.filter((x) => x !== recipe.id)
+      );
+    }
   }
-}
 
 
 
   // AI recipes: snapshot name/ingredients/steps, recipe_id = null
-  // async function handleToggleFavoriteAi(recipe, key) {
-  //   setFavoriteErr(null);
-  //   const isFav = favoriteAiKeys.includes(key);
-
-  //   // optimistic UI update (keys)
-  //   setFavoriteAiKeys((prev) =>
-  //     isFav ? prev.filter((x) => x !== key) : [...prev, key]
-  //   );
-
-  //   try {
-  //     const nowFav = await toggleFavoriteAiSnapshot(recipe);
-
-  //     setFavoriteAiKeys((prev) => {
-  //       const inSet = prev.includes(key);
-  //       if (nowFav && !inSet) return [...prev, key];
-  //       if (!nowFav && inSet) return prev.filter((x) => x !== key);
-  //       return prev;
-  //     });
-
-  //     setFavoriteAiNames((prev) => {
-  //       const name = recipe.name || "";
-  //       const inSet = prev.includes(name);
-  //       if (nowFav && !inSet) return [...prev, name];
-  //       if (!nowFav && inSet) return prev.filter((n) => n !== name);
-  //       return prev;
-  //     });
-  //   } catch (err) {
-  //     console.error("Favorite (AI) error:", err);
-  //     setFavoriteErr(err.message || "Failed to update favorites");
-
-  //     // revert optimistic update
-  //     setFavoriteAiKeys((prev) =>
-  //       isFav ? [...prev, key] : prev.filter((x) => x !== key)
-  //     );
-  //   }
-  // }
-
-
-  async function handleToggleFavoriteAi(recipe, key) {
-    setFavoriteErr(null);
+  async function handleToggleSavedAi(recipe, key) {
+    setSavedErr(null);
 
     const name = recipe.name || "";
-    const isFav =
-      favoriteAiKeys.includes(key) || favoriteAiNames.includes(name);
+    const isSaved =
+      savedAiKeys.includes(key) || savedAiNames.includes(name);
 
     // optimistic UI update
-    setFavoriteAiKeys((prev) =>
-      isFav ? prev.filter((x) => x !== key) : [...prev, key]
+    setSavedAiKeys((prev) =>
+      isSaved ? prev.filter((x) => x !== key) : [...prev, key]
     );
-    setFavoriteAiNames((prev) =>
-      isFav ? prev.filter((n) => n !== name) : [...prev, name]
+    setSavedAiNames((prev) =>
+      isSaved ? prev.filter((n) => n !== name) : [...prev, name]
     );
 
     try {
-      if (!isFav) {
-        // ADD favorite in Supabase and get the row (includes id)
-        const fav = await addFavoriteAiSnapshot(recipe); // { id, name, ingredients, ... }
+      if (!isSaved) {
+        // ADD saved recipe in Supabase and get the row (includes id)
+        const saved = await addSavedAiSnapshot(recipe); // { id, name, ingredients, ... }
 
         // Fire-and-forget: ask backend to generate + attach an image
-        // No need to await if you don't want to block the UI;
-        // you *can* await if you want to react to success/failure.
-        generateFavoriteImage(fav.id, recipe.name, recipe.ingredients);
+        generateSavedImage(saved.id, recipe.name, recipe.ingredients);
       } else {
-        // REMOVE favorite
-        await removeFavoriteAiByName(name);
+        // REMOVE saved recipe
+        await removeSavedAiByName(name);
       }
     } catch (err) {
-      console.error("Favorite (AI) error:", err);
-      setFavoriteErr(err.message || "Failed to update favorites");
+      console.error("Saved (AI) error:", err);
+      setSavedErr(err.message || "Failed to update saved recipes");
 
       // revert optimistic UI on error
-      setFavoriteAiKeys((prev) =>
-        isFav ? [...prev, key] : prev.filter((x) => x !== key)
+      setSavedAiKeys((prev) =>
+        isSaved ? [...prev, key] : prev.filter((x) => x !== key)
       );
-      setFavoriteAiNames((prev) =>
-        isFav ? [...prev, name] : prev.filter((n) => n !== name)
+      setSavedAiNames((prev) =>
+        isSaved ? [...prev, name] : prev.filter((n) => n !== name)
       );
     }
   }
@@ -894,7 +821,7 @@ export default function Search() {
                 <div style={{ display: "grid", gap: 12 }}>
                   {aiRecipes.map((r, i) => {
                     const key = `ai:${i}:${r.name || ""}`;
-                    const isFavorite = favoriteAiKeys.includes(key) || favoriteAiNames.includes(r.name || "");
+                    const isSaved = savedAiKeys.includes(key) || savedAiNames.includes(r.name || "");
                     const menuKey = `ai-menu:${i}`;
 
                     return (
@@ -930,8 +857,8 @@ export default function Search() {
                                     {t}
                                   </span>
                                 ))}
-                              {isFavorite && (
-                                <span style={S.tag}>★ Favorite</span>
+                              {isSaved && (
+                                <span style={S.tag}>★ Saved</span>
                               )}
                             </div>
                           </div>
@@ -959,11 +886,11 @@ export default function Search() {
                                   style={S.kebabItem}
                                   onClick={async (e) => {
                                     e.stopPropagation();
-                                    await handleToggleFavoriteAi(r, key);
+                                    await handleToggleSavedAi(r, key);
                                     setOpenMenuKey(null);
                                   }}
                                 >
-                                  {isFavorite ? "Remove favorite" : "Favorite"}
+                                  {isSaved ? "Unsave" : "Save"}
                                 </button>
                               </div>
                             )}
@@ -1042,7 +969,7 @@ export default function Search() {
           )}
 
           {results.items.map((r) => {
-            const isFavorite = favoriteLocalIds.includes(r.id);
+            const isSaved = savedLocalIds.includes(r.id);
             const menuKey = `local:${r.id}`;
 
             return (
@@ -1066,7 +993,7 @@ export default function Search() {
                       {!!r.popularity && <span>❤ {r.popularity}</span>}
                       {r.cuisine && <span>{r.cuisine}</span>}
                       {r.diet && <span>{r.diet}</span>}
-                      {isFavorite && <span style={S.tag}>★ Favorite</span>}
+                      {isSaved && <span style={S.tag}>★ Saved</span>}
                     </div>
                   </div>
 
@@ -1091,11 +1018,11 @@ export default function Search() {
                           style={S.kebabItem}
                           onClick={async (e) => {
                             e.stopPropagation();
-                            await handleToggleFavoriteLocal(r);
+                            await handleToggleSavedLocal(r);
                             setOpenMenuKey(null);
                           }}
                         >
-                          {isFavorite ? "Remove favorite" : "Favorite"}
+                          {isSaved ? "Unsave" : "Save"}
                         </button>
                       </div>
                     )}

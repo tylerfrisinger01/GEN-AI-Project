@@ -1,7 +1,13 @@
 import * as React from 'react';
 import { useDropzone } from "react-dropzone";
 
-const API_KEY = "AIzaSyAhjNVx1ebYkFH0ipLVXXnv6SlekC76QHg";
+const API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
+
+if (!API_KEY) {
+  console.warn(
+    "Missing REACT_APP_GEMINI_API_KEY. Identify page requests will fail until it is provided."
+  );
+}
 
 
 function fileToBase64(file) {

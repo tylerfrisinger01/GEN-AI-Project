@@ -13,7 +13,18 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { createClient } = require("@supabase/supabase-js");
 
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const openAiApiKey = process.env.OPENAI_API_KEY;
+const geminiApiKey = process.env.GEMINI_API_KEY;
+
+if (!openAiApiKey) {
+  console.warn("OPENAI_API_KEY is not set. OpenAI endpoints will fail.");
+}
+
+if (!geminiApiKey) {
+  console.warn("GEMINI_API_KEY is not set. Gemini image generation will fail.");
+}
+
+const genAI = geminiApiKey ? new GoogleGenerativeAI(geminiApiKey) : null;
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -40,7 +51,7 @@ app.use((req, res, next) => {
 // ---------------- AI Recipe Endpoint ----------------
 const model = new ChatOpenAI({
   model: 'gpt-4.1',
-  apiKey: "", 
+  apiKey: openAiApiKey,
 });
 
 app.post('/api/ai-recipes', async (req, res) => {
@@ -149,23 +160,40 @@ EXAMPLE INGREDIENT ENTRY:
 });
 
 
-// ---------------- Favorite Recipe Image Generation Endpoint ----------------
-app.post("/api/favorite-image", async (req, res) => {
+// ---------------- Saved Recipe Image Generation Endpoint ----------------
+app.post("/api/saved-image", async (req, res) => {
   try {
-    const { favorite_id, name, ingredients } = req.body || {};
-    if (!favorite_id) {
-      return res.status(400).json({ error: "favorite_id required" });
+    const { saved_id, name, ingredients } = req.body || {};
+    if (!saved_id) {
+      return res.status(400).json({ error: "saved_id required" });
     }
 
     const image = await generateRecipeImage({ name, ingredients });
-    const url = await uploadFavoriteImageToSupabase({
-      favoriteId: favorite_id,
+    const url = await uploadSavedImageToSupabase({
+      savedId: saved_id,
       image,
     });
 
     res.json({ image_url: url });
   } catch (err) {
-    console.error("Error generating favorite image:", err);
+    console.error("Error generating saved recipe image:", err);
+    res.status(500).json({ error: String(err?.message || err) });
+  }
+});
+
+app.post("/api/ai-image", async (req, res) => {
+  try {
+    const { name, ingredients } = req.body || {};
+    if (!name && !Array.isArray(ingredients)) {
+      return res.status(400).json({ error: "name or ingredients required" });
+    }
+
+    const image = await generateRecipeImage({ name, ingredients });
+    const mime = image?.mimeType || "image/jpeg";
+    const dataUrl = `data:${mime};base64,${image?.data || ""}`;
+    res.json({ image_url: dataUrl });
+  } catch (err) {
+    console.error("Error generating AI recipe image:", err);
     res.status(500).json({ error: String(err?.message || err) });
   }
 });
@@ -173,6 +201,9 @@ app.post("/api/favorite-image", async (req, res) => {
 
 // ---------------- Favorite Recipe Image Generation helper functions ----------------
 async function generateRecipeImage({ name, ingredients }) {
+  if (!genAI) {
+    throw new Error("GEMINI_API_KEY is not configured.");
+  }
   // Build a nice prompt from name + ingredients
   const ingredientList = Array.isArray(ingredients)
     ? ingredients
@@ -208,7 +239,7 @@ async function generateRecipeImage({ name, ingredients }) {
   });
 
   const response = await model.generateContent(prompt);
-  console.log("Gemini favorite image response:", response.response);
+  console.log("Gemini saved image response:", response.response);
   const parts =
     response?.response?.candidates?.[0]?.content?.parts || []; // adjust this if getting weird errors so it fits the response shape
 
@@ -223,10 +254,10 @@ async function generateRecipeImage({ name, ingredients }) {
 }
 
 
-async function uploadFavoriteImageToSupabase({ favoriteId, image }) {
+async function uploadSavedImageToSupabase({ savedId, image }) {
   const buffer = Buffer.from(image.data, "base64");
   const ext = image.mimeType === "image/png" ? "png" : "jpg";
-  const path = `favorites/${favoriteId}.${ext}`;
+  const path = `saved/${savedId}.${ext}`;
 
   const { error: uploadError } = await supabase.storage
     .from("recipe-images")
@@ -245,7 +276,7 @@ async function uploadFavoriteImageToSupabase({ favoriteId, image }) {
   const { error: updateError } = await supabase
     .from("favorites")
     .update({ image_url: publicUrl })
-    .eq("id", favoriteId);
+    .eq("id", savedId);
 
   if (updateError) throw updateError;
 
