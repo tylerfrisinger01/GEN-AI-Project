@@ -4,30 +4,19 @@ import { addSavedAiSnapshot, listSaved } from "../data/saved";
 import { generateAiImage } from "../api/aiImage";
 import { Link } from "react-router-dom";
 import { hydrateSavedRecipes, normalizeInstructions } from "../lib/hydrateSaved";
-
-// ---------------- LocalStorage Keys ----------------
-const LS_DIETARY = "dietary-settings";
-const LS_SHOPPING_LIST = "shopping-list";
+import {
+  getShoppingList,
+  addShoppingItem as createShoppingItem,
+  addShoppingItemsBulk,
+  toggleShoppingChecked,
+  removeShoppingItem as deleteShoppingItem,
+  clearShopping,
+} from "../data/shoppingList";
+import { addPantryItem } from "../data/pantry";
 
 const items = ["chicken breast", "ground beef", "onion", "garlic", "olive oil", "salt", "black pepper", "butter", "potatoes", "rice", "pasta", "tomatoes", "carrots", "bell peppers", "cheese", "eggs", "flour", "broth", "soy sauce", "herbs"];
 const AI_IMAGE_FALLBACK = "/meal_image.jpg";
 const AI_IMAGE_MAX_ATTEMPTS = 3;
-
-const DEFAULT_DIETARY = {
-  vegetarian: false,
-  vegan: false,
-  glutenFree: false,
-  dairyFree: false,
-  nutFree: false,
-  halal: false,
-  kosher: false,
-};
-
-function formatDietLabel(key = "") {
-  return key
-    .replace(/([A-Z])/g, " $1")
-    .replace(/^./, (s) => s.toUpperCase());
-}
 
 function extractIngredientName(entry) {
   if (!entry) return "";
@@ -50,19 +39,6 @@ function truncateText(text, max = 120) {
   if (!text) return "";
   if (text.length <= max) return text;
   return `${text.slice(0, max).trim()}…`;
-}
-
-// ---------------- Helpers ----------------
-function loadLS(key, fallback) {
-  try {
-    return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
-  } catch {
-    return fallback;
-  }
-}
-
-function saveLS(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
 }
 
 function createEmptyAiSession() {
@@ -135,6 +111,17 @@ function formatStepEntries(rawSteps = []) {
     .filter(Boolean);
 }
 
+function sortShoppingEntries(entries = []) {
+  return [...entries].sort((a, b) => {
+    if (!!a.checked === !!b.checked) {
+      const aTime = new Date(a.created_at || 0).getTime();
+      const bTime = new Date(b.created_at || 0).getTime();
+      return bTime - aTime;
+    }
+    return a.checked ? 1 : -1;
+  });
+}
+
 async function generateAiImageWithRetry(recipe, maxAttempts = AI_IMAGE_MAX_ATTEMPTS) {
   const payload = {
     name: recipe?.name,
@@ -156,8 +143,11 @@ export default function Home({
   aiSession = null,
   setAiSession = null,
 }) {
-  const [dietary, setDietary] = useState(() => ({ ...DEFAULT_DIETARY, ...loadLS(LS_DIETARY, {}) }));
-  const [shoppingList, setShoppingList] = useState(() => loadLS(LS_SHOPPING_LIST, []));
+  const [shoppingList, setShoppingList] = useState([]);
+  const [shoppingLoading, setShoppingLoading] = useState(true);
+  const [shoppingError, setShoppingError] = useState(null);
+  const [shoppingAddLoading, setShoppingAddLoading] = useState(false);
+  const [shoppingClearing, setShoppingClearing] = useState(false);
   const [savedRecipes, setSavedRecipes] = useState([]);
   const [savedLoading, setSavedLoading] = useState(true);
 
@@ -188,10 +178,6 @@ export default function Home({
       setAiImages(sessionState.images || []);
     }
   }, [sessionState]);
-
-  // Persist state
-  useEffect(() => saveLS(LS_DIETARY, dietary), [dietary]);
-  useEffect(() => saveLS(LS_SHOPPING_LIST, shoppingList), [shoppingList]);
 
   // ---------------- AI Fetch ----------------
   async function fetchAiRecipes(prompt, systemPrompt = null) {
@@ -234,17 +220,30 @@ export default function Home({
 
   const generateDefaultPrompt = useCallback(() => {
     const pantry = items.join(", ");
-    const diets = Object.keys(dietary).filter(k => dietary[k]).join(", ") || "none";
-    return `Generate 3 recipes using ingredients: ${pantry}.
-Dietary restrictions: ${diets}.
-Preferred cuisines: any.
+    return `Generate 3 balanced dinner recipes using the following pantry staples: ${pantry}.
+Focus on flavorful, practical meals that feel achievable on a weeknight.
 Return JSON array like: [{name, description, ingredients, steps}]`;
-  }, [dietary]);
+  }, []);
 
   const fetchSavedRecipes = useCallback(async () => {
     const data = await listSaved();
     const rows = Array.isArray(data) ? data : [];
     return hydrateSavedRecipes(rows);
+  }, []);
+
+  const loadShoppingList = useCallback(async () => {
+    setShoppingLoading(true);
+    setShoppingError(null);
+    try {
+      const rows = await getShoppingList();
+      setShoppingList(sortShoppingEntries(rows || []));
+    } catch (err) {
+      console.error("Failed to load shopping list:", err);
+      setShoppingError(err?.message || "Failed to load shopping list");
+      setShoppingList([]);
+    } finally {
+      setShoppingLoading(false);
+    }
   }, []);
 
   const resetAiSession = useCallback(() => {
@@ -315,6 +314,10 @@ Return JSON array like: [{name, description, ingredients, steps}]`;
   }, [aiRecipes.length, generateDefaultPrompt, runAiGeneration]);
 
   useEffect(() => {
+    loadShoppingList();
+  }, [loadShoppingList]);
+  
+  useEffect(() => {
     let cancelled = false;
     setSavedLoading(true);
     fetchSavedRecipes()
@@ -339,22 +342,129 @@ Return JSON array like: [{name, description, ingredients, steps}]`;
   }, [fetchSavedRecipes]);
 
   // ---------------- Handlers ----------------
-  function toggleDietary(key) {
-    setDietary(d => ({ ...d, [key]: !d[key] }));
-  }
+  const handleShoppingAdd = useCallback(
+    async (rawInput) => {
+      const normalized = (rawInput || "").trim();
+      if (!normalized) return;
+      const entries = normalized
+        .split(/[\n,]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      if (!entries.length) return;
 
-  function addShoppingItem(item) {
-    if (!item.trim()) return;
-    setShoppingList(prev => [...prev, { id: Math.random().toString(36).slice(2,7), name: item.trim(), done: false }]);
-  }
+      setShoppingAddLoading(true);
+      setShoppingError(null);
 
-  function toggleShoppingItem(id) {
-    setShoppingList(prev => prev.map(i => i.id === id ? { ...i, done: !i.done } : i));
-  }
+      try {
+        if (entries.length === 1) {
+          const row = await createShoppingItem({ name: entries[0] });
+          setShoppingList((prev) =>
+            sortShoppingEntries([row, ...prev])
+          );
+        } else {
+          const inserted = await addShoppingItemsBulk(entries);
+          setShoppingList((prev) =>
+            sortShoppingEntries([...(inserted || []), ...prev])
+          );
+        }
+      } catch (err) {
+        console.error("Failed to add shopping item:", err);
+        setShoppingError(err?.message || "Failed to add shopping item");
+      } finally {
+        setShoppingAddLoading(false);
+      }
+    },
+    []
+  );
 
-  function clearShoppingList() {
-    setShoppingList([]);
-  }
+  const syncCheckedItemToPantry = useCallback(
+    async (entry) => {
+      if (!entry?.name) return;
+      try {
+        await addPantryItem({
+          name: entry.name,
+          qty: entry.qty ?? "",
+          notes: entry.notes ?? "",
+        });
+      } catch (err) {
+        console.error("Failed to sync pantry item:", err);
+        setShoppingError((prev) => prev ?? "Could not add item to pantry.");
+      }
+    },
+    [setShoppingError]
+  );
+
+  const handleShoppingToggle = useCallback(
+    async (item) => {
+    if (!item?.id) return;
+    const nextChecked = !item.checked;
+    setShoppingList((prev) =>
+      sortShoppingEntries(
+        prev.map((row) =>
+          row.id === item.id ? { ...row, checked: nextChecked } : row
+        )
+      )
+    );
+    try {
+      const updated = await toggleShoppingChecked(item.id, nextChecked);
+      if (updated) {
+        setShoppingList((prev) =>
+          sortShoppingEntries(
+            prev.map((row) =>
+              row.id === updated.id ? { ...row, ...updated } : row
+            )
+          )
+        );
+          if (updated.checked) {
+            await syncCheckedItemToPantry(updated);
+          }
+      }
+    } catch (err) {
+      console.error("Failed to update shopping item:", err);
+      setShoppingError(err?.message || "Failed to update shopping item");
+      setShoppingList((prev) =>
+        sortShoppingEntries(
+          prev.map((row) =>
+            row.id === item.id ? { ...row, checked: item.checked } : row
+          )
+        )
+      );
+    }
+    },
+    [syncCheckedItemToPantry]
+  );
+
+  const handleShoppingRemove = useCallback(
+    async (id) => {
+      if (!id) return;
+      setShoppingError(null);
+      setShoppingList((prev) => prev.filter((row) => row.id !== id));
+      try {
+        await deleteShoppingItem(id);
+      } catch (err) {
+        console.error("Failed to remove shopping item:", err);
+        setShoppingError(err?.message || "Failed to remove shopping item");
+        loadShoppingList();
+      }
+    },
+    [loadShoppingList]
+  );
+
+  const handleClearShopping = useCallback(async () => {
+    if (!shoppingList.length) return;
+    setShoppingClearing(true);
+    setShoppingError(null);
+    try {
+      await clearShopping();
+      setShoppingList([]);
+    } catch (err) {
+      console.error("Failed to clear shopping list:", err);
+      setShoppingError(err?.message || "Failed to clear shopping list");
+      await loadShoppingList();
+    } finally {
+      setShoppingClearing(false);
+    }
+  }, [loadShoppingList, shoppingList.length]);
 
   async function handleSaveAiRecipe(recipe, index) {
     if (!recipe) return;
@@ -390,7 +500,14 @@ Return JSON array like: [{name, description, ingredients, steps}]`;
     }
   }
 
-  const activeDietaryKeys = Object.keys(dietary).filter((key) => dietary[key]);
+  const outstandingShopping = useMemo(
+    () => shoppingList.filter((item) => !item.checked),
+    [shoppingList]
+  );
+  const completedShopping = useMemo(
+    () => shoppingList.filter((item) => !!item.checked),
+    [shoppingList]
+  );
   const dinnerMeta = dinnerIdea
     ? [
         dinnerIdea.minutes ? `${dinnerIdea.minutes} min` : null,
@@ -520,7 +637,7 @@ Return JSON array like: [{name, description, ingredients, steps}]`;
       {/* AI Recipes */}
       <section className="panel">
         <div className="panel-head">
-          <h2>AI-Generated Recipes</h2>
+          <h2>Recipe Inspiration</h2>
         </div>
         {loadingAi ? (
           <p>Generating AI recipes...</p>
@@ -591,7 +708,7 @@ Return JSON array like: [{name, description, ingredients, steps}]`;
                               : "Save Recipe"}
                           </button>
                           {alreadySaved && (
-                            <span className="ai-card-saved">Saved to favorites</span>
+                            <span className="ai-card-saved">Recipe Saved</span>
                           )}
                         </div>
                         {isExpanded && (
@@ -627,13 +744,6 @@ Return JSON array like: [{name, description, ingredients, steps}]`;
                 })}
               </div>
             )}
-            <button
-              className="btn primary"
-              onClick={() => runAiGeneration({ prompt: generateDefaultPrompt() })}
-              disabled={loadingAi}
-            >
-              Regenerate AI Recipes
-            </button>
           </>
         )}
       </section>
@@ -647,16 +757,8 @@ Return JSON array like: [{name, description, ingredients, steps}]`;
             <span className="value">{savedRecipes.length}</span>
           </li>
           <li>
-            <span className="label">Active Dietary Filters</span>
-            <span className="value">
-              {activeDietaryKeys.length
-                ? activeDietaryKeys.map(formatDietLabel).join(", ")
-                : "None"}
-            </span>
-          </li>
-          <li>
-            <span className="label">Shopping List Items</span>
-            <span className="value">{shoppingList.length}</span>
+            <span className="label">Pending Shopping Items</span>
+            <span className="value">{outstandingShopping.length}</span>
           </li>
           <li>
             <span className="label">Daily Challenge</span>
@@ -665,36 +767,77 @@ Return JSON array like: [{name, description, ingredients, steps}]`;
         </ul>
       </section>
 
-      {/* Dietary Restrictions */}
-      <section className="panel">
-        <div className="panel-head"><h2>Dietary Restrictions</h2></div>
-        <div className="dietary-grid">
-          {Object.keys(DEFAULT_DIETARY).map(key => (
-            <label key={key} className={`diet-chip ${dietary[key] ? "on" : ""}`}>
-              <input type="checkbox" checked={!!dietary[key]} onChange={() => toggleDietary(key)} />
-              <span className="name">{key.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase())}</span>
-            </label>
-          ))}
-        </div>
-      </section>
-
       {/* Shopping List */}
-      <section className="panel">
+      <section className="panel shopping-panel">
         <div className="panel-head">
           <h2>Shopping List</h2>
-          {shoppingList.length > 0 && <button className="btn ghost" onClick={clearShoppingList}>Clear</button>}
+          {shoppingList.length > 0 && (
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={handleClearShopping}
+              disabled={shoppingClearing}
+            >
+              {shoppingClearing ? "Clearing…" : "Clear all"}
+            </button>
+          )}
         </div>
-        <AddShoppingItem onAdd={addShoppingItem} />
-        {shoppingList.length === 0 ? (
-          <div className="empty"><p>Your shopping list is empty. Add ingredients above!</p></div>
+
+        <div className="shopping-list-header">
+          <div>
+            <p className="shopping-eyebrow">Next grocery run</p>
+            <p className="shopping-headline">
+              {shoppingLoading
+                ? "Syncing shopping list…"
+                : outstandingShopping.length
+                ? `${outstandingShopping.length} item${
+                    outstandingShopping.length === 1 ? "" : "s"
+                  } left to buy`
+                : "You're fully stocked"}
+            </p>
+          </div>
+          <div className="shopping-pills">
+            <span className="shopping-pill pending">
+              {outstandingShopping.length} to buy
+            </span>
+            <span className="shopping-pill done">
+              {completedShopping.length} checked
+            </span>
+          </div>
+        </div>
+
+        <AddShoppingItem
+          onAdd={handleShoppingAdd}
+          isAdding={shoppingAddLoading}
+        />
+
+        {shoppingError && <p className="inline-error">{shoppingError}</p>}
+
+        {shoppingLoading ? (
+          <div className="empty">
+            <p>Loading your shopping list…</p>
+          </div>
+        ) : shoppingList.length === 0 ? (
+          <div className="empty">
+            <p>Your shopping list is empty. Add ingredients above!</p>
+          </div>
         ) : (
-          <ul className="shopping-list">
-            {shoppingList.map(i => (
-              <li key={i.id} className={i.done ? "done" : ""} onClick={() => toggleShoppingItem(i.id)}>
-                {i.name}
-              </li>
-            ))}
-          </ul>
+          <div className="shopping-list-grid">
+            <ShoppingColumn
+              title="Need to buy"
+              items={outstandingShopping}
+              emptyText="Every ingredient is accounted for."
+              onToggle={handleShoppingToggle}
+              onRemove={handleShoppingRemove}
+            />
+            <ShoppingColumn
+              title="Checked off"
+              items={completedShopping}
+              emptyText="Nothing checked off yet."
+              onToggle={handleShoppingToggle}
+              onRemove={handleShoppingRemove}
+            />
+          </div>
         )}
       </section>
     </div>
@@ -702,30 +845,99 @@ Return JSON array like: [{name, description, ingredients, steps}]`;
 }
 
 // ---------------- Components ----------------
-function AddShoppingItem({ onAdd }) {
-  const itemRef = useRef(null);
+function AddShoppingItem({ onAdd, isAdding }) {
+  const [value, setValue] = useState("");
 
-  function add() {
-    onAdd(itemRef.current?.value || "");
-    if (itemRef.current) itemRef.current.value = "";
-    itemRef.current?.focus();
+  async function submit() {
+    const text = value.trim();
+    if (!text || isAdding) return;
+    await onAdd(text);
+    setValue("");
   }
 
   return (
     <div className="add-fav-row">
       <input
-        ref={itemRef}
         type="text"
-        placeholder="Add item (e.g., Tomatoes)"
+        value={value}
+        placeholder="Add item or paste comma-separated entries"
+        onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
             event.preventDefault();
-            add();
+            submit();
           }
         }}
       />
-      <button className="btn primary" type="button" onClick={add}>
-        Add
+      <button
+        className="btn primary"
+        type="button"
+        onClick={submit}
+        disabled={isAdding || !value.trim()}
+      >
+        {isAdding ? "Adding…" : "Add"}
+      </button>
+    </div>
+  );
+}
+
+function ShoppingColumn({
+  title,
+  items = [],
+  emptyText,
+  onToggle,
+  onRemove,
+}) {
+  return (
+    <div className="shopping-column">
+      <div className="shopping-column-head">
+        <h3>{title}</h3>
+        <span className="shopping-count-pill">{items.length}</span>
+      </div>
+      {items.length === 0 ? (
+        <p className="shopping-column-empty">{emptyText}</p>
+      ) : (
+        <div className="shopping-items">
+          {items.map((item) => (
+            <ShoppingListItem
+              key={item.id}
+              item={item}
+              onToggle={onToggle}
+              onRemove={onRemove}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShoppingListItem({ item, onToggle, onRemove }) {
+  if (!item) return null;
+  const detail = [item.qty, item.notes]
+    .map((value) => (value ? String(value).trim() : ""))
+    .filter(Boolean)
+    .join(" • ");
+
+  return (
+    <div className={`shopping-item ${item.checked ? "done" : ""}`}>
+      <label className="shopping-item-main">
+        <input
+          type="checkbox"
+          checked={!!item.checked}
+          onChange={() => onToggle(item)}
+        />
+        <div className="shopping-item-text">
+          <span className="shopping-item-name">{item.name}</span>
+          {detail && <span className="shopping-item-detail">{detail}</span>}
+        </div>
+      </label>
+      <button
+        type="button"
+        className="shopping-remove-btn"
+        onClick={() => onRemove(item.id)}
+      >
+        Remove
       </button>
     </div>
   );

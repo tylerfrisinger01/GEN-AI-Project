@@ -3,6 +3,7 @@ import React, { useEffect, useState } from "react";
 import { listSaved, deleteSavedById, addSavedAiSnapshot } from "../data/saved";
 import { normalizeInstructions } from "../lib/hydrateSaved";
 import { generateAiImage } from "../api/aiImage";
+import { addShoppingItemsBulk } from "../data/shoppingList";
 
 const API_BASE =
   process.env.REACT_APP_API_BASE?.replace(/\/$/, "") ||
@@ -112,9 +113,13 @@ function formatIngredientEntry(entry) {
   return null;
 }
 
-function collectIngredientLines(recipe) {
+function listAllIngredientLines(recipe) {
   const list = Array.isArray(recipe?.ingredients) ? recipe.ingredients : [];
-  return list.map(formatIngredientEntry).filter(Boolean).slice(0, 20);
+  return list.map(formatIngredientEntry).filter(Boolean);
+}
+
+function collectIngredientLines(recipe) {
+  return listAllIngredientLines(recipe).slice(0, 20);
 }
 
 function collectStepLines(recipe) {
@@ -276,6 +281,34 @@ const S = {
     borderRadius: 12,
     marginBottom: 8,
   },
+  imgPlaceholder: {
+    width: "100%",
+    height: 220,
+    borderRadius: 12,
+    marginBottom: 8,
+    background: "linear-gradient(135deg, #f1f5f9 0%, #e2e8f0 100%)",
+    backgroundSize: "2000px 100%",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
+    position: "relative",
+    overflow: "hidden",
+  },
+  imgPlaceholderSpinner: {
+    width: 40,
+    height: 40,
+    border: "3px solid #e2e8f0",
+    borderTop: "3px solid #4f46e5",
+    borderRadius: "50%",
+    animation: "spin 1s linear infinite",
+  },
+  imgPlaceholderText: {
+    fontSize: 13,
+    color: "#64748b",
+    fontWeight: 500,
+  },
   title: { fontSize: 18, fontWeight: 700, marginBottom: 4 },
   badgeRow: { display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 },
   badge: {
@@ -365,6 +398,16 @@ const S = {
     alignItems: "center",
     gap: 6,
     boxShadow: "0 8px 18px rgba(67,56,202,0.18)",
+  },
+  shoppingButton: {
+    border: "1px solid #c7d2fe",
+    borderRadius: 999,
+    padding: "9px 16px",
+    fontSize: 13,
+    fontWeight: 600,
+    background: "#eef2ff",
+    color: "#312e81",
+    cursor: "pointer",
   },
   remixPanel: {
     marginTop: 16,
@@ -462,25 +505,69 @@ export default function Saved() {
   const [expandedIds, setExpandedIds] = useState([]);
   const [remixState, setRemixState] = useState(INITIAL_REMIX_STATE);
   const [remixNotice, setRemixNotice] = useState(null);
+  const [shoppingSyncState, setShoppingSyncState] = useState({
+    activeId: null,
+    loading: false,
+    error: null,
+  });
+  const [imageGeneratingIds, setImageGeneratingIds] = useState(new Set());
 
-  async function loadSaved() {
+  async function loadSaved(showLoading = true) {
     try {
-      setLoading(true);
-      setErr(null);
+      if (showLoading) {
+        setLoading(true);
+        setErr(null);
+      }
       const data = await listSaved();
       const enriched = await hydrateLocalSaved(data || []);
       setSaved(enriched);
+      
+      // Track recipes without images as generating
+      const idsWithoutImages = enriched
+        .filter((row) => !row.image_url && row.id)
+        .map((row) => row.id);
+      if (idsWithoutImages.length > 0) {
+        setImageGeneratingIds((prev) => {
+          const next = new Set(prev);
+          idsWithoutImages.forEach(id => next.add(id));
+          return next;
+        });
+      }
+      
+      // Remove recipes that now have images from generating set
+      setImageGeneratingIds((prev) => {
+        const next = new Set(prev);
+        enriched
+          .filter((row) => row.image_url && row.id)
+          .forEach((row) => next.delete(row.id));
+        return next;
+      });
     } catch (e) {
       console.error("Error loading saved recipes:", e);
-      setErr(e.message || "Failed to load saved recipes");
+      if (showLoading) {
+        setErr(e.message || "Failed to load saved recipes");
+      }
     } finally {
-      setLoading(false);
+      if (showLoading) {
+        setLoading(false);
+      }
     }
   }
 
   useEffect(() => {
     loadSaved();
   }, []);
+
+  // Poll for image updates if there are recipes generating images
+  useEffect(() => {
+    if (imageGeneratingIds.size === 0) return;
+    
+    const pollInterval = setInterval(() => {
+      loadSaved(false); // Background update, don't show loading spinner
+    }, 3000); // Check every 3 seconds
+    
+    return () => clearInterval(pollInterval);
+  }, [imageGeneratingIds.size]);
 
   useEffect(() => {
     setExpandedIds((prev) =>
@@ -495,6 +582,14 @@ export default function Saved() {
       setRemixState({ ...INITIAL_REMIX_STATE });
     }
   }, [saved, remixState.activeId]);
+
+  useEffect(() => {
+    if (!shoppingSyncState.activeId) return;
+    const exists = saved.some((row) => row.id === shoppingSyncState.activeId);
+    if (!exists) {
+      setShoppingSyncState({ activeId: null, loading: false, error: null });
+    }
+  }, [saved, shoppingSyncState.activeId]);
 
   useEffect(() => {
     if (!remixNotice) return undefined;
@@ -564,6 +659,40 @@ export default function Saved() {
     });
   }
 
+  async function handleSendIngredientsToShopping(fav) {
+    if (!fav || !fav.id) return;
+    const lines = listAllIngredientLines(fav);
+    if (!lines.length) {
+      setShoppingSyncState({
+        activeId: fav.id,
+        loading: false,
+        error: "This recipe has no ingredients to add.",
+      });
+      return;
+    }
+    const deduped = [
+      ...new Map(lines.map((line) => [line.toLowerCase(), line])).values(),
+    ];
+    setShoppingSyncState({ activeId: fav.id, loading: true, error: null });
+    try {
+      await addShoppingItemsBulk(deduped);
+      setShoppingSyncState({ activeId: null, loading: false, error: null });
+      setRemixNotice(
+        `Added ${deduped.length} ingredient${
+          deduped.length === 1 ? "" : "s"
+        } from “${fav.name || "this recipe"}” to your shopping list.`
+      );
+    } catch (error) {
+      console.error("Failed to add shopping items:", error);
+      setShoppingSyncState({
+        activeId: fav.id,
+        loading: false,
+        error:
+          error?.message || "Failed to add ingredients to shopping list",
+      });
+    }
+  }
+
   async function handleGenerateRemix(fav) {
     if (!fav || !fav.id) return;
     if (remixState.loading) return;
@@ -584,6 +713,21 @@ export default function Saved() {
           "AI response was incomplete. Try adding more detail to your request."
         );
       }
+      
+      // Create a temporary recipe entry with a placeholder ID to show loading state
+      const tempId = `temp-${Date.now()}`;
+      const tempRow = formatSavedRow({
+        id: tempId,
+        ...sanitized,
+        image_url: null,
+      });
+      
+      // Add to saved list immediately with loading state
+      setSaved((prev) => [tempRow, ...prev]);
+      setExpandedIds((prev) => [tempId, ...prev.filter((entry) => entry !== tempId)]);
+      setImageGeneratingIds((prev) => new Set([...prev, tempId]));
+      
+      // Generate image
       const imageUrl =
         (await generateAiImage({
           name: sanitized.name,
@@ -597,20 +741,35 @@ export default function Saved() {
       });
       const normalizedRow = formatSavedRow(savedRow);
 
+      // Replace temp entry with real one
       setSaved((prev) => {
-        const filtered = prev.filter((row) => row.id !== normalizedRow.id);
+        const filtered = prev.filter((row) => row.id !== tempId);
         return [normalizedRow, ...filtered];
       });
       setExpandedIds((prev) => [
         normalizedRow.id,
-        ...prev.filter((entry) => entry !== normalizedRow.id),
+        ...prev.filter((entry) => entry !== tempId && entry !== normalizedRow.id),
       ]);
+      setImageGeneratingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(tempId);
+        return next;
+      });
       setRemixState({ ...INITIAL_REMIX_STATE });
       setRemixNotice(
-        `Added “${normalizedRow.name || "AI remix"}” to your saved recipes.`
+        `Added "${normalizedRow.name || "AI remix"}” to your saved recipes.`
       );
     } catch (error) {
       console.error("Failed to remix recipe:", error);
+      // Remove temp entry on error
+      setSaved((prev) => prev.filter((row) => !row.id?.startsWith("temp-")));
+      setImageGeneratingIds((prev) => {
+        const next = new Set(prev);
+        Array.from(prev).forEach(id => {
+          if (id?.startsWith("temp-")) next.delete(id);
+        });
+        return next;
+      });
       setRemixState((prev) => ({
         ...prev,
         loading: false,
@@ -620,15 +779,26 @@ export default function Saved() {
   }
 
   return (
-    <main style={S.page}>
-      <div style={S.row}>
-        <div>
-          <h1 style={S.h1}>Saved recipes</h1>
-          <div style={S.small}>
-            Showing all saved recipes with their generated images.
+    <>
+      <style>{`
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+        @keyframes shimmer {
+          0% { background-position: -1000px 0; }
+          100% { background-position: 1000px 0; }
+        }
+      `}</style>
+      <main style={S.page}>
+        <div style={S.row}>
+          <div>
+            <h1 style={S.h1}>Saved recipes</h1>
+            <div style={S.small}>
+              Showing all saved recipes with their generated images.
+            </div>
           </div>
         </div>
-      </div>
 
       {remixNotice && <div style={S.notice}>{remixNotice}</div>}
 
@@ -654,6 +824,12 @@ export default function Saved() {
             const isExpanded = expandedIds.includes(fav.id);
             const isRemixActive = remixState.activeId === fav.id;
             const isRemixLoading = remixState.loading && isRemixActive;
+            const shoppingBusy =
+              shoppingSyncState.loading && shoppingSyncState.activeId === fav.id;
+            const shoppingErrorVisible =
+              shoppingSyncState.activeId === fav.id
+                ? shoppingSyncState.error
+                : null;
 
             return (
               <article
@@ -668,14 +844,30 @@ export default function Saved() {
                 }}
                 onClick={() => toggleExpanded(fav.id)}
               >
-                {fav.image_url && (
-                  <img
-                    src={fav.image_url}
-                    alt={title}
-                    style={S.img}
-                    loading="lazy"
-                  />
-                )}
+                {(() => {
+                  const isGenerating = imageGeneratingIds.has(fav.id);
+                  const hasImage = !!fav.image_url;
+                  
+                  if (isGenerating || !hasImage) {
+                    return (
+                      <div style={S.imgPlaceholder}>
+                        <div style={S.imgPlaceholderSpinner} />
+                        <div style={S.imgPlaceholderText}>
+                          {isGenerating ? "Generating image..." : "Image loading..."}
+                        </div>
+                      </div>
+                    );
+                  }
+                  
+                  return (
+                    <img
+                      src={fav.image_url}
+                      alt={title}
+                      style={S.img}
+                      loading="lazy"
+                    />
+                  );
+                })()}
 
                 <div style={S.cardHeader}>
                   <div style={S.title}>{title}</div>
@@ -760,6 +952,22 @@ export default function Saved() {
                       <button
                         type="button"
                         style={{
+                          ...S.shoppingButton,
+                          opacity: shoppingBusy ? 0.7 : 1,
+                        }}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleSendIngredientsToShopping(fav);
+                        }}
+                        disabled={shoppingBusy}
+                      >
+                        {shoppingBusy
+                          ? "Adding ingredients…"
+                          : "Add ingredients to shopping list"}
+                      </button>
+                      <button
+                        type="button"
+                        style={{
                           ...S.remixButton,
                           opacity: remixState.loading && !isRemixActive ? 0.6 : 1,
                         }}
@@ -787,6 +995,9 @@ export default function Saved() {
                         {removingId === fav.id ? "Removing…" : "Unsave"}
                       </button>
                     </div>
+                    {shoppingErrorVisible && (
+                      <div style={S.remixError}>{shoppingErrorVisible}</div>
+                    )}
 
                     {isRemixActive && (
                       <div
@@ -866,6 +1077,7 @@ export default function Saved() {
           })}
         </div>
       )}
-    </main>
+      </main>
+    </>
   );
 }
