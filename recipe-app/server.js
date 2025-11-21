@@ -13,7 +13,18 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { createClient } = require("@supabase/supabase-js");
 
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const openAiApiKey = process.env.OPENAI_API_KEY;
+const geminiApiKey = process.env.GEMINI_API_KEY;
+
+if (!openAiApiKey) {
+  console.warn("OPENAI_API_KEY is not set. OpenAI endpoints will fail.");
+}
+
+if (!geminiApiKey) {
+  console.warn("GEMINI_API_KEY is not set. Gemini image generation will fail.");
+}
+
+const genAI = geminiApiKey ? new GoogleGenerativeAI(geminiApiKey) : null;
 
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -28,7 +39,7 @@ const db = sqlite(DB_PATH, { readonly: true });
 
 app.use(express.json());
 
-// permissive CORS for local dev
+
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -40,7 +51,7 @@ app.use((req, res, next) => {
 // ---------------- AI Recipe Endpoint ----------------
 const model = new ChatOpenAI({
   model: 'gpt-4.1',
-  apiKey: "", 
+  apiKey: openAiApiKey,
 });
 
 app.post('/api/ai-recipes', async (req, res) => {
@@ -76,7 +87,7 @@ app.post('/api/ai-search', async (req, res) => {
       prompt
     } = req.body || {};
 
-    // Build userPrompt if not provided
+    
     const userPrompt = typeof prompt === 'string' && prompt
       ? prompt
       : (() => {
@@ -132,7 +143,7 @@ EXAMPLE INGREDIENT ENTRY:
 
     const systemMsg = new SystemMessage(systemPrompt || defaultSystemPrompt);
 
-    // Redundantly include pantry in human message to keep it fresh in context
+    
     const pantryLine = pantry?.length
       ? `Pantry items available for substitution: ${pantry.join(', ')}`
       : 'Pantry items available for substitution: (none)';
@@ -149,31 +160,51 @@ EXAMPLE INGREDIENT ENTRY:
 });
 
 
-// ---------------- Favorite Recipe Image Generation Endpoint ----------------
-app.post("/api/favorite-image", async (req, res) => {
+// ---------------- Saved Recipe Image Generation Endpoint ----------------
+app.post("/api/saved-image", async (req, res) => {
   try {
-    const { favorite_id, name, ingredients } = req.body || {};
-    if (!favorite_id) {
-      return res.status(400).json({ error: "favorite_id required" });
+    const { saved_id, name, ingredients } = req.body || {};
+    if (!saved_id) {
+      return res.status(400).json({ error: "saved_id required" });
     }
 
     const image = await generateRecipeImage({ name, ingredients });
-    const url = await uploadFavoriteImageToSupabase({
-      favoriteId: favorite_id,
+    const url = await uploadSavedImageToSupabase({
+      savedId: saved_id,
       image,
     });
 
     res.json({ image_url: url });
   } catch (err) {
-    console.error("Error generating favorite image:", err);
+    console.error("Error generating saved recipe image:", err);
+    res.status(500).json({ error: String(err?.message || err) });
+  }
+});
+
+app.post("/api/ai-image", async (req, res) => {
+  try {
+    const { name, ingredients } = req.body || {};
+    if (!name && !Array.isArray(ingredients)) {
+      return res.status(400).json({ error: "name or ingredients required" });
+    }
+
+    const image = await generateRecipeImage({ name, ingredients });
+    const mime = image?.mimeType || "image/jpeg";
+    const dataUrl = `data:${mime};base64,${image?.data || ""}`;
+    res.json({ image_url: dataUrl });
+  } catch (err) {
+    console.error("Error generating AI recipe image:", err);
     res.status(500).json({ error: String(err?.message || err) });
   }
 });
 
 
-// ---------------- Favorite Recipe Image Generation helper functions ----------------
+// ---------------- Saved Recipe Image Generation helper functions ----------------
 async function generateRecipeImage({ name, ingredients }) {
-  // Build a nice prompt from name + ingredients
+  if (!genAI) {
+    throw new Error("GEMINI_API_KEY is not configured.");
+  }
+  
   const ingredientList = Array.isArray(ingredients)
     ? ingredients
         .map((x) => {
@@ -199,34 +230,59 @@ async function generateRecipeImage({ name, ingredients }) {
     - No text overlays or watermarks.
     `;
 
-  // Use a Gemini model that supports image output
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-image", 
-    generationConfig: {
-      responseModalities: ["IMAGE"], // only image back
-    },
-  });
+  const MAX_RETRIES = 3;
+  
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      
+      const model = genAI.getGenerativeModel({
+        model: "gemini-2.5-flash-image", 
+        generationConfig: {
+          responseModalities: ["IMAGE"], // only image back
+        },
+      });
 
-  const response = await model.generateContent(prompt);
-  console.log("Gemini favorite image response:", response.response);
-  const parts =
-    response?.response?.candidates?.[0]?.content?.parts || []; // adjust this if getting weird errors so it fits the response shape
+      const response = await model.generateContent(prompt);
+      console.log(`Gemini image response (attempt ${attempt + 1}/${MAX_RETRIES}):`, response.response);
+      const parts =
+        response?.response?.candidates?.[0]?.content?.parts || []; 
 
-  const imagePart = parts.find((p) => p.inlineData);
+      const imagePart = parts.find((p) => p.inlineData);
 
-  if (!imagePart || !imagePart.inlineData?.data) {
-    throw new Error("No image data returned from Gemini");
+      if (!imagePart || !imagePart.inlineData?.data) {
+        if (attempt < MAX_RETRIES - 1) {
+          console.log(`No image data returned, retrying... (attempt ${attempt + 1}/${MAX_RETRIES})`);
+          // Wait a bit before retrying 
+          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          continue;
+        }
+        throw new Error("No image data returned from Gemini after 3 attempts");
+      }
+
+      
+      return imagePart.inlineData; 
+    } catch (error) {
+      // If it's the "No image data" error and we have retries left, continue the loop
+      if (error.message.includes("No image data") && attempt < MAX_RETRIES - 1) {
+        console.log(`Image generation failed, retrying... (attempt ${attempt + 1}/${MAX_RETRIES}):`, error.message);
+        // Wait a bit before retrying 
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+        continue;
+      }
+      // If it's a different error or we're out of retries, throw it
+      throw error;
+    }
   }
-
-  // inlineData: { mimeType, data (base64) }
-  return imagePart.inlineData; // { mimeType, data }
+  
+  // This should never be reached, but just in case
+  throw new Error("Failed to generate image after all retry attempts");
 }
 
 
-async function uploadFavoriteImageToSupabase({ favoriteId, image }) {
+async function uploadSavedImageToSupabase({ savedId, image }) {
   const buffer = Buffer.from(image.data, "base64");
   const ext = image.mimeType === "image/png" ? "png" : "jpg";
-  const path = `favorites/${favoriteId}.${ext}`;
+  const path = `saved/${savedId}.${ext}`;
 
   const { error: uploadError } = await supabase.storage
     .from("recipe-images")
@@ -245,7 +301,7 @@ async function uploadFavoriteImageToSupabase({ favoriteId, image }) {
   const { error: updateError } = await supabase
     .from("favorites")
     .update({ image_url: publicUrl })
-    .eq("id", favoriteId);
+    .eq("id", savedId);
 
   if (updateError) throw updateError;
 
@@ -266,7 +322,7 @@ app.get('/api/health', (req, res) => {
   }
 });
 
-/** Build FTS WHERE clause */
+
 function buildFtsWhere(q) {
   if (!q) return { where: '1=1', params: {} };
   const words = q.trim().split(/\s+/).slice(0, 6).map(w => w.replace(/"/g, ''));
@@ -274,7 +330,7 @@ function buildFtsWhere(q) {
   return { where: 'recipes_fts MATCH :match', params: { match: matchExpr } };
 }
 
-/** Sort clause (use computed "score" for relevance) */
+
 function orderClause(sort) {
   switch ((sort || '').toLowerCase()) {
     case 'rating':       return 'ORDER BY r.rating DESC';

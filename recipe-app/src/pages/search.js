@@ -2,30 +2,22 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { generateSearchRecipes } from "../api/aiSearch";
 import { getPantry } from "../data/pantry";
 import {
-  toggleFavoriteLocal,
-  toggleFavoriteAiSnapshot,
-  listLocalFavorites,
-  listAiFavorites,
-  addFavoriteLocal,
-  addFavoriteAiSnapshot,
-  removeFavoriteAiByName,
-  removeFavoriteLocal,
-} from "../data/favorites";
+  listLocalSaved,
+  listAiSaved,
+  addSavedLocal,
+  addSavedAiSnapshot,
+  removeSavedAiByName,
+  removeSavedLocal,
+} from "../data/saved";
 
-import { generateFavoriteImage } from "../api/favoritesImageGeneration";
+import { generateSavedImage } from "../api/savedImageGeneration";
 
 
-/**
- * Local Recipe Search
- * - Popover filters (Diet, Cuisine, Ingredients) + inline pills
- * - Sidebar removed
- * - NOW: persists Diet/Cuisine/Ingredients to localStorage
- */
 
 const API_BASE = "http://localhost:4000/api";
 const DEFAULT_PAGE_SIZE = 10;
 const PAGE_SIZES = [5, 10, 20, 50];
-const LS_KEY = "searchFilters.v1"; // <- localStorage key
+const LS_KEY = "searchFilters.v1"; 
 
 const S = {
   page: { maxWidth: 1100, margin: "0 auto", padding: "28px 16px", fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif", color: "#0f172a" },
@@ -42,7 +34,7 @@ const S = {
     borderRadius: 999,
     fontSize: 12,
     fontWeight: 700,
-    background: "#16a34a",          // green-600
+    background: "#16a34a",          
     color: "#fff",
     border: "1px solid #16a34a",
   },
@@ -53,9 +45,9 @@ const S = {
     width: 18,
     height: 18,
     borderRadius: 999,
-    border: "1px solid #a7f3d0",     // emerald-200 accent
-    background: "#ecfdf5",           // emerald-50
-    color: "#065f46",                // emerald-700
+    border: "1px solid #a7f3d0",     
+    background: "#ecfdf5",           
+    color: "#065f46",                
     cursor: "pointer",
     fontSize: 12,
     lineHeight: "16px",
@@ -234,13 +226,13 @@ export default function Search() {
   const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
   const [sort, setSort] = useState("relevance");
 
-  // persisted filters
   const [cuisine, setCuisine] = useState("");
   const [diet, setDiet] = useState("");
   const [pickedIngredients, setPickedIngredients] = useState([]);
 
-  // not persisted (tuneable)
+  // eslint-disable-next-line no-unused-vars
   const [minRating, setMinRating] = useState(0);
+  // eslint-disable-next-line no-unused-vars
   const [maxMinutes, setMaxMinutes] = useState(0);
 
   const [ingredientInput, setIngredientInput] = useState("");
@@ -261,11 +253,12 @@ export default function Search() {
   const [pantryItems, setPantryItems] = useState([]);
   const pantryLoadedRef = useRef(false);
 
-  const [favoriteLocalIds, setFavoriteLocalIds] = useState([]);      // recipe.id from local DB
-  const [favoriteAiKeys, setFavoriteAiKeys] = useState([]);          // synthetic keys for AI recipes
-  const [openMenuKey, setOpenMenuKey] = useState(null);              // which 3-dot menu is open
-  const [favoriteAiNames, setFavoriteAiNames] = useState([]);       // persisted AI favorites by name
-  const [favoriteErr, setFavoriteErr] = useState(null);
+  const [savedLocalIds, setSavedLocalIds] = useState([]);      
+  const [savedAiKeys, setSavedAiKeys] = useState([]);          
+  const [openMenuKey, setOpenMenuKey] = useState(null);              
+  const [savedAiNames, setSavedAiNames] = useState([]);       
+  // eslint-disable-next-line no-unused-vars
+  const [savedErr, setSavedErr] = useState(null);
 
 
   const [openId, setOpenId] = useState(null);
@@ -276,50 +269,37 @@ export default function Search() {
   const inputRef = useRef(null);
   const menuRef = useRef(null);
 
-  // ---- LOCALSTORAGE: load once on mount
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(LS_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw);
-        if (typeof saved?.diet === "string") setDiet(saved.diet);
-        if (typeof saved?.cuisine === "string") setCuisine(saved.cuisine);
-        if (Array.isArray(saved?.ingredients)) setPickedIngredients(saved.ingredients.filter(Boolean));
-      }
-    } catch {}
-  }, []);
-
 
   useEffect(() => {
     let cancelled = false;
 
-    async function loadFavorites() {
+    async function loadSaved() {
       try {
-        const [localFavs, aiFavs] = await Promise.all([
-          listLocalFavorites(), // [{ recipe_id, created_at }]
-          listAiFavorites(),    // [{ name, ingredients, instructions, created_at }]
+        const [localSaved, aiSaved] = await Promise.all([
+          listLocalSaved(), 
+          listAiSaved(),    
         ]);
 
         if (cancelled) return;
 
-        setFavoriteLocalIds(
-          (localFavs || [])
+        setSavedLocalIds(
+          (localSaved || [])
             .map((f) => f.recipe_id)
             .filter((id) => id != null)
         );
 
-        setFavoriteAiNames(
-          (aiFavs || [])
+        setSavedAiNames(
+          (aiSaved || [])
             .map((f) => f.name)
             .filter(Boolean)
         );
       } catch (e) {
-        console.error("Error loading favorites:", e);
-        // optional: setFavoriteErr("Failed to load favorites");
+        console.error("Error loading saved recipes:", e);
+        
       }
     }
 
-    loadFavorites();
+    loadSaved();
     return () => {
       cancelled = true;
     };
@@ -368,7 +348,6 @@ export default function Search() {
       .finally(() => setLoading(false));
   }, [dq, page, pageSize, cuisine, diet, minRating, maxMinutes, sort, ingredientsCSV]);
 
-  // reset page when search inputs (except page/pageSize) change
   useEffect(() => { setPage(1); }, [dq, cuisine, diet, minRating, maxMinutes, sort, ingredientsCSV]);
 
   async function openDetails(id) {
@@ -403,11 +382,11 @@ export default function Search() {
 
   const hasCriteria = useMemo(() => {
     return (
-      q.trim().length > 0 ||          // text in the box
-      !!diet ||                       // a diet chip
-      !!cuisine ||                    // a cuisine chip
-      pickedIngredients.length > 0 || // any ingredients picked
-      usePantry                       // pantry toggle on
+      q.trim().length > 0 ||          
+      !!diet ||                       
+      !!cuisine ||                    
+      pickedIngredients.length > 0 || 
+      usePantry                       
     );
   }, [q, diet, cuisine, pickedIngredients.length, usePantry]);
 
@@ -419,6 +398,7 @@ export default function Search() {
     return base.filter(s => s.name.toLowerCase().includes(q)).slice(0, 30);
   }, [ingredientInput, ingredientSuggestions, pickedIngredients]);
 
+  // eslint-disable-next-line no-unused-vars
   const addIngredient = (raw) => {
     const name = String(raw || "").trim();
     if (!name) return;
@@ -448,7 +428,7 @@ export default function Search() {
   }, [dq, results]);
 
   async function runAI() {
-    if (!hasCriteria) {               // hard stop: nothing to search
+    if (!hasCriteria) {               
       setAiRecipes([]);
       setAiErr(null);
       return;
@@ -473,148 +453,77 @@ export default function Search() {
   }
 
     // Local DB recipes: save recipe_id only, everything else null
-  // async function handleToggleFavoriteLocal(recipe) {
-  //   setFavoriteErr(null);
-  //   const isFav = favoriteLocalIds.includes(recipe.id);
+  async function handleToggleSavedLocal(recipe) {
+    setSavedErr(null);
+    const isSaved = savedLocalIds.includes(recipe.id);
 
-  //   // optimistic UI update
-  //   setFavoriteLocalIds((prev) =>
-  //     isFav ? prev.filter((x) => x !== recipe.id) : [...prev, recipe.id]
-  //   );
-
-  //   try {
-  //     const nowFav = await toggleFavoriteLocal(recipe.id); // uses /data/favorites.js
-
-  //     // make sure state matches DB result
-  //     setFavoriteLocalIds((prev) => {
-  //       const inSet = prev.includes(recipe.id);
-  //       if (nowFav && !inSet) return [...prev, recipe.id];
-  //       if (!nowFav && inSet) return prev.filter((x) => x !== recipe.id);
-  //       return prev;
-  //     });
-  //   } catch (err) {
-  //     console.error("Favorite (local) error:", err);
-  //     setFavoriteErr(err.message || "Failed to update favorites");
-
-  //     // revert optimistic update
-  //     setFavoriteLocalIds((prev) =>
-  //       isFav ? [...prev, recipe.id] : prev.filter((x) => x !== recipe.id)
-  //     );
-  //   }
-  // }
-
-
-  async function handleToggleFavoriteLocal(recipe) {
-  setFavoriteErr(null);
-  const isFav = favoriteLocalIds.includes(recipe.id);
-
-  // optimistic UI update
-  setFavoriteLocalIds((prev) =>
-    isFav ? prev.filter((x) => x !== recipe.id) : [...prev, recipe.id]
-  );
-
-  try {
-    if (!isFav) {
-      // ADD favorite and get the row
-      const fav = await addFavoriteLocal(recipe.id); // { id, recipe_id, ... }
-
-      // Generate image using local recipe details
-      // Use recipe.name + recipe.ingredients (array of strings)
-      generateFavoriteImage(fav.id, recipe.name, recipe.ingredients);
-    } else {
-      // REMOVE favorite
-      await removeFavoriteLocal(recipe.id);
-    }
-  } catch (err) {
-    console.error("Favorite (local) error:", err);
-    setFavoriteErr(err.message || "Failed to update favorites");
-
-    // revert optimistic UI on error
-    setFavoriteLocalIds((prev) =>
-      isFav ? [...prev, recipe.id] : prev.filter((x) => x !== recipe.id)
-    );
-  }
-}
-
-
-
-  // AI recipes: snapshot name/ingredients/steps, recipe_id = null
-  // async function handleToggleFavoriteAi(recipe, key) {
-  //   setFavoriteErr(null);
-  //   const isFav = favoriteAiKeys.includes(key);
-
-  //   // optimistic UI update (keys)
-  //   setFavoriteAiKeys((prev) =>
-  //     isFav ? prev.filter((x) => x !== key) : [...prev, key]
-  //   );
-
-  //   try {
-  //     const nowFav = await toggleFavoriteAiSnapshot(recipe);
-
-  //     setFavoriteAiKeys((prev) => {
-  //       const inSet = prev.includes(key);
-  //       if (nowFav && !inSet) return [...prev, key];
-  //       if (!nowFav && inSet) return prev.filter((x) => x !== key);
-  //       return prev;
-  //     });
-
-  //     setFavoriteAiNames((prev) => {
-  //       const name = recipe.name || "";
-  //       const inSet = prev.includes(name);
-  //       if (nowFav && !inSet) return [...prev, name];
-  //       if (!nowFav && inSet) return prev.filter((n) => n !== name);
-  //       return prev;
-  //     });
-  //   } catch (err) {
-  //     console.error("Favorite (AI) error:", err);
-  //     setFavoriteErr(err.message || "Failed to update favorites");
-
-  //     // revert optimistic update
-  //     setFavoriteAiKeys((prev) =>
-  //       isFav ? [...prev, key] : prev.filter((x) => x !== key)
-  //     );
-  //   }
-  // }
-
-
-  async function handleToggleFavoriteAi(recipe, key) {
-    setFavoriteErr(null);
-
-    const name = recipe.name || "";
-    const isFav =
-      favoriteAiKeys.includes(key) || favoriteAiNames.includes(name);
-
-    // optimistic UI update
-    setFavoriteAiKeys((prev) =>
-      isFav ? prev.filter((x) => x !== key) : [...prev, key]
-    );
-    setFavoriteAiNames((prev) =>
-      isFav ? prev.filter((n) => n !== name) : [...prev, name]
+    
+    setSavedLocalIds((prev) =>
+      isSaved ? prev.filter((x) => x !== recipe.id) : [...prev, recipe.id]
     );
 
     try {
-      if (!isFav) {
-        // ADD favorite in Supabase and get the row (includes id)
-        const fav = await addFavoriteAiSnapshot(recipe); // { id, name, ingredients, ... }
+      if (!isSaved) {
+        // ADD saved recipe and get the row
+        const saved = await addSavedLocal(recipe.id); 
 
-        // Fire-and-forget: ask backend to generate + attach an image
-        // No need to await if you don't want to block the UI;
-        // you *can* await if you want to react to success/failure.
-        generateFavoriteImage(fav.id, recipe.name, recipe.ingredients);
+        // Generate image using local recipe details
+        // Use recipe.name + recipe.ingredients 
+        generateSavedImage(saved.id, recipe.name, recipe.ingredients);
       } else {
-        // REMOVE favorite
-        await removeFavoriteAiByName(name);
+        // REMOVE saved recipe
+        await removeSavedLocal(recipe.id);
       }
     } catch (err) {
-      console.error("Favorite (AI) error:", err);
-      setFavoriteErr(err.message || "Failed to update favorites");
+      console.error("Saved (local) error:", err);
+      setSavedErr(err.message || "Failed to update saved recipes");
 
-      // revert optimistic UI on error
-      setFavoriteAiKeys((prev) =>
-        isFav ? [...prev, key] : prev.filter((x) => x !== key)
+      
+      setSavedLocalIds((prev) =>
+        isSaved ? [...prev, recipe.id] : prev.filter((x) => x !== recipe.id)
       );
-      setFavoriteAiNames((prev) =>
-        isFav ? [...prev, name] : prev.filter((n) => n !== name)
+    }
+  }
+
+
+
+  // AI recipes: name/ingredients/steps, recipe_id = null
+  async function handleToggleSavedAi(recipe, key) {
+    setSavedErr(null);
+
+    const name = recipe.name || "";
+    const isSaved =
+      savedAiKeys.includes(key) || savedAiNames.includes(name);
+
+    
+    setSavedAiKeys((prev) =>
+      isSaved ? prev.filter((x) => x !== key) : [...prev, key]
+    );
+    setSavedAiNames((prev) =>
+      isSaved ? prev.filter((n) => n !== name) : [...prev, name]
+    );
+
+    try {
+      if (!isSaved) {
+        // ADD saved recipe in Supabase and get the row 
+        const saved = await addSavedAiSnapshot(recipe); 
+
+        // ask backend to generate + store an image
+        generateSavedImage(saved.id, recipe.name, recipe.ingredients);
+      } else {
+        // REMOVE saved recipe
+        await removeSavedAiByName(name);
+      }
+    } catch (err) {
+      console.error("Saved (AI) error:", err);
+      setSavedErr(err.message || "Failed to update saved recipes");
+
+      
+      setSavedAiKeys((prev) =>
+        isSaved ? [...prev, key] : prev.filter((x) => x !== key)
+      );
+      setSavedAiNames((prev) =>
+        isSaved ? [...prev, name] : prev.filter((n) => n !== name)
       );
     }
   }
@@ -677,7 +586,7 @@ export default function Search() {
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
-              runAI(); // ⟵ trigger AI on Enter
+              runAI(); 
               setMenuOpen(false);
             }
           }}
@@ -879,7 +788,7 @@ export default function Search() {
 
         {err && <div style={S.error}>{err}</div>}
 
-        {/* ==== AI Recipe Suggestions (Section 4) ==== */}
+        {/* ==== AI Recipe Suggestions ==== */}
         {(aiLoading || aiErr || aiRecipes.length > 0) && (
           <section style={{ marginTop: 12 }}>
             <div style={{ ...S.card, borderColor: "#c7d2fe", background: "#eef2ff" }}>
@@ -894,7 +803,7 @@ export default function Search() {
                 <div style={{ display: "grid", gap: 12 }}>
                   {aiRecipes.map((r, i) => {
                     const key = `ai:${i}:${r.name || ""}`;
-                    const isFavorite = favoriteAiKeys.includes(key) || favoriteAiNames.includes(r.name || "");
+                    const isSaved = savedAiKeys.includes(key) || savedAiNames.includes(r.name || "");
                     const menuKey = `ai-menu:${i}`;
 
                     return (
@@ -930,8 +839,8 @@ export default function Search() {
                                     {t}
                                   </span>
                                 ))}
-                              {isFavorite && (
-                                <span style={S.tag}>★ Favorite</span>
+                              {isSaved && (
+                                <span style={S.tag}>★ Saved</span>
                               )}
                             </div>
                           </div>
@@ -959,11 +868,11 @@ export default function Search() {
                                   style={S.kebabItem}
                                   onClick={async (e) => {
                                     e.stopPropagation();
-                                    await handleToggleFavoriteAi(r, key);
+                                    await handleToggleSavedAi(r, key);
                                     setOpenMenuKey(null);
                                   }}
                                 >
-                                  {isFavorite ? "Remove favorite" : "Favorite"}
+                                  {isSaved ? "Unsave" : "Save"}
                                 </button>
                               </div>
                             )}
@@ -1042,7 +951,7 @@ export default function Search() {
           )}
 
           {results.items.map((r) => {
-            const isFavorite = favoriteLocalIds.includes(r.id);
+            const isSaved = savedLocalIds.includes(r.id);
             const menuKey = `local:${r.id}`;
 
             return (
@@ -1066,7 +975,7 @@ export default function Search() {
                       {!!r.popularity && <span>❤ {r.popularity}</span>}
                       {r.cuisine && <span>{r.cuisine}</span>}
                       {r.diet && <span>{r.diet}</span>}
-                      {isFavorite && <span style={S.tag}>★ Favorite</span>}
+                      {isSaved && <span style={S.tag}>★ Saved</span>}
                     </div>
                   </div>
 
@@ -1091,18 +1000,18 @@ export default function Search() {
                           style={S.kebabItem}
                           onClick={async (e) => {
                             e.stopPropagation();
-                            await handleToggleFavoriteLocal(r);
+                            await handleToggleSavedLocal(r);
                             setOpenMenuKey(null);
                           }}
                         >
-                          {isFavorite ? "Remove favorite" : "Favorite"}
+                          {isSaved ? "Unsave" : "Save"}
                         </button>
                       </div>
                     )}
                   </div>
                 </div>
 
-                {/* the rest of your existing card stays the same */}
+                
                 {!!r.ingredients?.length && (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
                     {r.ingredients.slice(0, 12).map((ing) => (
@@ -1176,8 +1085,5 @@ export default function Search() {
       </section>
     </div>
   </main>
-);
-
-  
-}
+);}
 

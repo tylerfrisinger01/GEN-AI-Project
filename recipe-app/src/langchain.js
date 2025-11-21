@@ -1,10 +1,18 @@
 import { ChatOpenAI } from "@langchain/openai";
 import { SystemMessage, HumanMessage } from "langchain";
 
+const openAiApiKey = process.env.REACT_APP_OPENAI_API_KEY;
+
+if (!openAiApiKey) {
+  console.warn(
+    "Missing REACT_APP_OPENAI_API_KEY. LangChain calls will fail until it is provided."
+  );
+}
+
 // Configure your OpenAI model
 const model = new ChatOpenAI({
   model: "gpt-4.1",
-  apiKey: "",
+  apiKey: openAiApiKey,
 });
 
 /**
@@ -56,7 +64,7 @@ async function generateSearchResponse(userPrompt, systemPrompt = null) { // for 
     ];
 
     const response = await model.invoke(messages);
-    // LangChain returns an object with text
+    
     return response.text ?? response;
   } catch (error) {
     console.error("Error invoking model:", error);

@@ -1,8 +1,8 @@
 const API = 'http://localhost:4000/api';
 
 
-// --- tiny normalizers so UI doesn't double-number or choke on string ingredients ---
 const normalizeSteps = (steps = []) =>
+  // eslint-disable-next-line no-useless-escape
   steps.map(s => String(s).replace(/^\s*(?:\d+[\.\)]|-)\s*/, '').trim());
 
 const normalizeIngredients = (ings = []) =>
