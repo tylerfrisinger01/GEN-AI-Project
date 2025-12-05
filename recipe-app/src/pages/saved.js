@@ -923,7 +923,7 @@ export default function Saved() {
                               <li key={idx}>
                                 {typeof ing === "string"
                                   ? ing
-                                  : ing.ingredient || ""}
+                                  : formatIngredientEntry(ing) || ing.ingredient || ing.name || ""}
                               </li>
                             ))}
                           </ul>
