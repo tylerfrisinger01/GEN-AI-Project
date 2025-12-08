@@ -61,7 +61,7 @@ app.post('/api/ai-recipes', async (req, res) => {
 
     const systemMsg = new SystemMessage(
       systemPrompt ||
-        'You are a helpful assistant that creates recipes based on dietary preferences and ingredients. ' +
+        'You are a helpful assistant that creates recipes based on dietary preferences, description and ingredients. ' +
         'Return a JSON array of recipes with fields: name, description, ingredients (array of strings), steps (array of strings).'
     );
     const messages = [systemMsg, new HumanMessage(prompt)];

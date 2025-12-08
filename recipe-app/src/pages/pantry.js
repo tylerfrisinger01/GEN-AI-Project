@@ -51,7 +51,7 @@ const EMOJI_MAP = {
   broccoli: "🥦",
   eggplant: "🍆",
   cucumber: "🥒",
-  pepperoni: "🍕",
+  pizza: "🍕",
   bagel: "🥯",
   waffles: "🧇",
   bacon: "🥓",
@@ -76,6 +76,7 @@ const EMOJI_MAP = {
   pop: "🥤",
   soda: "🥤",
   cereal: "🥣",
+  popcorn: "🍿",
 };
 
 function inferCategory(name) {
