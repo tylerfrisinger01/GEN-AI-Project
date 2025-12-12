@@ -1,18 +1,14 @@
-// server.js
 const express = require('express');
 const sqlite = require('better-sqlite3');
 const path = require('path');
 require('dotenv').config();
 
-// LangChain / OpenAI
 const { ChatOpenAI } = require('@langchain/openai');
 const { SystemMessage, HumanMessage } = require('@langchain/core/messages');
-
-// Gemeni 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { createClient } = require("@supabase/supabase-js");
 
-
+// API keys are accessed from environment variables for security.
 const openAiApiKey = process.env.OPENAI_API_KEY;
 const geminiApiKey = process.env.GEMINI_API_KEY;
 
@@ -26,20 +22,21 @@ if (!geminiApiKey) {
 
 const genAI = geminiApiKey ? new GoogleGenerativeAI(geminiApiKey) : null;
 
+// Initialize Supabase for storing user data and saved recipes
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-
 const app = express();
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'recipes.db');
+// Open the database in read-only mode to prevent accidental writes during search
 const db = sqlite(DB_PATH, { readonly: true });
 
 app.use(express.json());
 
-
+// permissive CORS for local dev so frontend can talk to backend easily
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -48,7 +45,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------------- AI Recipe Endpoint ----------------
+// Endpoints
+
 const model = new ChatOpenAI({
   model: 'gpt-4.1',
   apiKey: openAiApiKey,
@@ -59,6 +57,7 @@ app.post('/api/ai-recipes', async (req, res) => {
     const { prompt, systemPrompt } = req.body;
     if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
 
+    // Set a system message to define the assistant's persona and output format
     const systemMsg = new SystemMessage(
       systemPrompt ||
         'You are a helpful assistant that creates recipes based on dietary preferences, description and ingredients. ' +
@@ -74,7 +73,6 @@ app.post('/api/ai-recipes', async (req, res) => {
   }
 });
 
-
 app.post('/api/ai-search', async (req, res) => {
   try {
     const {
@@ -87,7 +85,7 @@ app.post('/api/ai-search', async (req, res) => {
       prompt
     } = req.body || {};
 
-    
+    // Construct the user prompt based on available filters if a raw prompt isn't provided
     const userPrompt = typeof prompt === 'string' && prompt
       ? prompt
       : (() => {
@@ -143,7 +141,6 @@ EXAMPLE INGREDIENT ENTRY:
 
     const systemMsg = new SystemMessage(systemPrompt || defaultSystemPrompt);
 
-    
     const pantryLine = pantry?.length
       ? `Pantry items available for substitution: ${pantry.join(', ')}`
       : 'Pantry items available for substitution: (none)';
@@ -159,8 +156,6 @@ EXAMPLE INGREDIENT ENTRY:
   }
 });
 
-
-// ---------------- Saved Recipe Image Generation Endpoint ----------------
 app.post("/api/saved-image", async (req, res) => {
   try {
     const { saved_id, name, ingredients } = req.body || {};
@@ -198,13 +193,11 @@ app.post("/api/ai-image", async (req, res) => {
   }
 });
 
-
-// ---------------- Saved Recipe Image Generation helper functions ----------------
 async function generateRecipeImage({ name, ingredients }) {
   if (!genAI) {
     throw new Error("GEMINI_API_KEY is not configured.");
   }
-  
+  // Format the ingredient list to be more readable for the image generator
   const ingredientList = Array.isArray(ingredients)
     ? ingredients
         .map((x) => {
@@ -232,20 +225,20 @@ async function generateRecipeImage({ name, ingredients }) {
 
   const MAX_RETRIES = 3;
   
+  // Retry mechanism handles potential failures from the image API
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
-      
       const model = genAI.getGenerativeModel({
         model: "gemini-2.5-flash-image", 
         generationConfig: {
-          responseModalities: ["IMAGE"], // only image back
+          responseModalities: ["IMAGE"], // only image back, no text
         },
       });
 
       const response = await model.generateContent(prompt);
       console.log(`Gemini image response (attempt ${attempt + 1}/${MAX_RETRIES}):`, response.response);
       const parts =
-        response?.response?.candidates?.[0]?.content?.parts || []; 
+        response?.response?.candidates?.[0]?.content?.parts || [];
 
       const imagePart = parts.find((p) => p.inlineData);
 
@@ -262,19 +255,15 @@ async function generateRecipeImage({ name, ingredients }) {
       
       return imagePart.inlineData; 
     } catch (error) {
-      // If it's the "No image data" error and we have retries left, continue the loop
       if (error.message.includes("No image data") && attempt < MAX_RETRIES - 1) {
         console.log(`Image generation failed, retrying... (attempt ${attempt + 1}/${MAX_RETRIES}):`, error.message);
-        // Wait a bit before retrying 
         await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
         continue;
       }
-      // If it's a different error or we're out of retries, throw it
       throw error;
     }
   }
   
-  // This should never be reached, but just in case
   throw new Error("Failed to generate image after all retry attempts");
 }
 
@@ -297,7 +286,7 @@ async function uploadSavedImageToSupabase({ savedId, image }) {
     data: { publicUrl },
   } = supabase.storage.from("recipe-images").getPublicUrl(path);
 
-  // update the favorites row
+  // Update the favorites table with the new image URL
   const { error: updateError } = await supabase
     .from("favorites")
     .update({ image_url: publicUrl })
@@ -313,14 +302,6 @@ async function uploadSavedImageToSupabase({ savedId, image }) {
 
 
 // ---------------- Existing endpoints ----------------
-app.get('/api/health', (req, res) => {
-  try {
-    const row = db.prepare('SELECT 1 AS ok').get();
-    res.json({ ok: !!row, db: DB_PATH });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e) });
-  }
-});
 
 
 function buildFtsWhere(q) {
@@ -329,8 +310,6 @@ function buildFtsWhere(q) {
   const matchExpr = words.length ? words.map(w => `"${w}"`).join(' NEAR ') : '';
   return { where: 'recipes_fts MATCH :match', params: { match: matchExpr } };
 }
-
-
 function orderClause(sort) {
   switch ((sort || '').toLowerCase()) {
     case 'rating':       return 'ORDER BY r.rating DESC';

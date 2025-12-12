@@ -12,13 +12,17 @@ import {
 
 import { generateSavedImage } from "../api/savedImageGeneration";
 
+// Check if the API base URL is set to ensure requests can be made
+const API_BASE = process.env.REACT_APP_API_BASE;
 
-
-const API_BASE = "http://localhost:4000/api";
+if (!API_BASE) {
+  console.warn("Missing REACT_APP_API_BASE. Identify page requests will fail until it is provided.");
+}
 const DEFAULT_PAGE_SIZE = 10;
 const PAGE_SIZES = [5, 10, 20, 50];
-const LS_KEY = "searchFilters.v1"; 
+const LS_KEY = "searchFilters.v1";
 
+// Styles are kept inline for simplicity and to avoid external stylesheet dependencies.
 const S = {
   page: { maxWidth: 1100, margin: "0 auto", padding: "28px 16px", fontFamily: "Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif", color: "#0f172a" },
   h1: { fontSize: 28, fontWeight: 800, textAlign: "center", margin: "0 0 20px" },
@@ -34,7 +38,7 @@ const S = {
     borderRadius: 999,
     fontSize: 12,
     fontWeight: 700,
-    background: "#16a34a",          
+    background: "#16a34a",
     color: "#fff",
     border: "1px solid #16a34a",
   },
@@ -45,9 +49,9 @@ const S = {
     width: 18,
     height: 18,
     borderRadius: 999,
-    border: "1px solid #a7f3d0",     
-    background: "#ecfdf5",           
-    color: "#065f46",                
+    border: "1px solid #a7f3d0",
+    background: "#ecfdf5",
+    color: "#065f46",
     cursor: "pointer",
     fontSize: 12,
     lineHeight: "16px",
@@ -66,11 +70,11 @@ const S = {
   card: { border: "1px solid #e2e8f0", borderRadius: 16, background: "#fff", padding: 16 },
   chip: (active) => ({
     fontSize: 12,
-  padding: "6px 10px",
+    padding: "6px 10px",
   borderRadius: 999,
-  border: `1px solid ${active ? "#16a34a" : "#86efac"}`, // green-600 / green-200
+  border: `1px solid ${active ? "#16a34a" : "#86efac"}`,
   background: active ? "#16a34a" : "#ffffff",
-  color: active ? "#ffffff" : "#065f46",                 // emerald-700 text when inactive
+  color: active ? "#ffffff" : "#065f46",
   cursor: "pointer",
   fontWeight: 700,
   }),
@@ -143,6 +147,7 @@ const S = {
 
 };
 
+// Inject a style tag for the loading animation
 if (typeof document !== "undefined" && !document.getElementById("searchPulseKeyframes")) {
   const style = document.createElement("style");
   style.id = "searchPulseKeyframes";
@@ -230,10 +235,8 @@ export default function Search() {
   const [diet, setDiet] = useState("");
   const [pickedIngredients, setPickedIngredients] = useState([]);
 
-  // eslint-disable-next-line no-unused-vars
-  const [minRating, setMinRating] = useState(0);
-  // eslint-disable-next-line no-unused-vars
-  const [maxMinutes, setMaxMinutes] = useState(0);
+  const [minRating] = useState(0);
+  const [maxMinutes] = useState(0);
 
   const [ingredientInput, setIngredientInput] = useState("");
   const ingredientsCSV = useMemo(
@@ -253,12 +256,11 @@ export default function Search() {
   const [pantryItems, setPantryItems] = useState([]);
   const pantryLoadedRef = useRef(false);
 
-  const [savedLocalIds, setSavedLocalIds] = useState([]);      
-  const [savedAiKeys, setSavedAiKeys] = useState([]);          
-  const [openMenuKey, setOpenMenuKey] = useState(null);              
-  const [savedAiNames, setSavedAiNames] = useState([]);       
-  // eslint-disable-next-line no-unused-vars
-  const [savedErr, setSavedErr] = useState(null);
+  const [savedLocalIds, setSavedLocalIds] = useState([]);
+  const [savedAiKeys, setSavedAiKeys] = useState([]);
+  const [openMenuKey, setOpenMenuKey] = useState(null);
+  const [savedAiNames, setSavedAiNames] = useState([]);
+  const [, setSavedErr] = useState(null);
 
 
   const [openId, setOpenId] = useState(null);
@@ -269,6 +271,19 @@ export default function Search() {
   const inputRef = useRef(null);
   const menuRef = useRef(null);
 
+  // Restore search filters from localStorage to preserve the user's context
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        if (typeof saved?.diet === "string") setDiet(saved.diet);
+        if (typeof saved?.cuisine === "string") setCuisine(saved.cuisine);
+        if (Array.isArray(saved?.ingredients)) setPickedIngredients(saved.ingredients.filter(Boolean));
+      }
+    } catch {}
+  }, []);
+
 
   useEffect(() => {
     let cancelled = false;
@@ -276,8 +291,8 @@ export default function Search() {
     async function loadSaved() {
       try {
         const [localSaved, aiSaved] = await Promise.all([
-          listLocalSaved(), 
-          listAiSaved(),    
+          listLocalSaved(),
+          listAiSaved(),
         ]);
 
         if (cancelled) return;
@@ -295,7 +310,6 @@ export default function Search() {
         );
       } catch (e) {
         console.error("Error loading saved recipes:", e);
-        
       }
     }
 
@@ -306,6 +320,7 @@ export default function Search() {
   }, []);
 
 
+  // Only load the pantry if the user opts in to using it
   useEffect(() => {
     if (usePantry && !pantryLoadedRef.current) {
       pantryLoadedRef.current = true;
@@ -313,12 +328,11 @@ export default function Search() {
         .then(setPantryItems)
         .catch((err) => {
           console.error("Error loading pantry:", err);
-          pantryLoadedRef.current = false; // allow retry if it failed
+          pantryLoadedRef.current = false;
         });
     }
   }, [usePantry]);
 
-  // ---- LOCALSTORAGE: save whenever filters change
   useEffect(() => {
     try {
       const payload = JSON.stringify({
@@ -330,14 +344,12 @@ export default function Search() {
     } catch {}
   }, [diet, cuisine, pickedIngredients]);
 
-  // load facets once
   useEffect(() => {
     apiFacets()
       .then((f) => setFacets({ cuisines: f.cuisines || [], diets: f.diets || [], ingredients: f.ingredients || [] }))
       .catch(() => {});
   }, []);
 
-  // search whenever inputs change
   useEffect(() => {
     if (!dq) { setResults({ page: 1, page_size: pageSize, total: 0, pages: 0, items: [] }); setErr(null); return; }
     setLoading(true);
@@ -358,7 +370,6 @@ export default function Search() {
     if (row) { detailsCacheRef.current.set(id, row); setDetail(row); }
   }
 
-  // ingredients suggestions (facets preferred; else derive from results)
   const ingredientSuggestions = useMemo(() => {
     if (facets.ingredients?.length) {
       return facets.ingredients
@@ -382,11 +393,11 @@ export default function Search() {
 
   const hasCriteria = useMemo(() => {
     return (
-      q.trim().length > 0 ||          
-      !!diet ||                       
-      !!cuisine ||                    
-      pickedIngredients.length > 0 || 
-      usePantry                       
+      q.trim().length > 0 ||
+      !!diet ||
+      !!cuisine ||
+      pickedIngredients.length > 0 ||
+      usePantry
     );
   }, [q, diet, cuisine, pickedIngredients.length, usePantry]);
 
@@ -398,13 +409,6 @@ export default function Search() {
     return base.filter(s => s.name.toLowerCase().includes(q)).slice(0, 30);
   }, [ingredientInput, ingredientSuggestions, pickedIngredients]);
 
-  // eslint-disable-next-line no-unused-vars
-  const addIngredient = (raw) => {
-    const name = String(raw || "").trim();
-    if (!name) return;
-    setPickedIngredients((xs) => (xs.includes(name) ? xs : [...xs, name]));
-    setIngredientInput("");
-  };
   const toggleIngredient = (name) =>
     setPickedIngredients((xs) => (xs.includes(name) ? xs.filter((x) => x !== name) : [...xs, name]));
 
@@ -428,7 +432,7 @@ export default function Search() {
   }, [dq, results]);
 
   async function runAI() {
-    if (!hasCriteria) {               
+    if (!hasCriteria) {
       setAiRecipes([]);
       setAiErr(null);
       return;
@@ -452,42 +456,32 @@ export default function Search() {
     }
   }
 
-    // Local DB recipes: save recipe_id only, everything else null
+  // Update the local saved state and trigger image generation for the newly saved recipe
   async function handleToggleSavedLocal(recipe) {
     setSavedErr(null);
     const isSaved = savedLocalIds.includes(recipe.id);
 
-    
     setSavedLocalIds((prev) =>
       isSaved ? prev.filter((x) => x !== recipe.id) : [...prev, recipe.id]
     );
 
     try {
       if (!isSaved) {
-        // ADD saved recipe and get the row
-        const saved = await addSavedLocal(recipe.id); 
-
-        // Generate image using local recipe details
-        // Use recipe.name + recipe.ingredients 
+        const saved = await addSavedLocal(recipe.id);
         generateSavedImage(saved.id, recipe.name, recipe.ingredients);
       } else {
-        // REMOVE saved recipe
         await removeSavedLocal(recipe.id);
       }
     } catch (err) {
       console.error("Saved (local) error:", err);
       setSavedErr(err.message || "Failed to update saved recipes");
 
-      
       setSavedLocalIds((prev) =>
         isSaved ? [...prev, recipe.id] : prev.filter((x) => x !== recipe.id)
       );
     }
   }
 
-
-
-  // AI recipes: name/ingredients/steps, recipe_id = null
   async function handleToggleSavedAi(recipe, key) {
     setSavedErr(null);
 
@@ -495,7 +489,6 @@ export default function Search() {
     const isSaved =
       savedAiKeys.includes(key) || savedAiNames.includes(name);
 
-    
     setSavedAiKeys((prev) =>
       isSaved ? prev.filter((x) => x !== key) : [...prev, key]
     );
@@ -505,20 +498,15 @@ export default function Search() {
 
     try {
       if (!isSaved) {
-        // ADD saved recipe in Supabase and get the row 
-        const saved = await addSavedAiSnapshot(recipe); 
-
-        // ask backend to generate + store an image
+        const saved = await addSavedAiSnapshot(recipe);
         generateSavedImage(saved.id, recipe.name, recipe.ingredients);
       } else {
-        // REMOVE saved recipe
         await removeSavedAiByName(name);
       }
     } catch (err) {
       console.error("Saved (AI) error:", err);
       setSavedErr(err.message || "Failed to update saved recipes");
 
-      
       setSavedAiKeys((prev) =>
         isSaved ? [...prev, key] : prev.filter((x) => x !== key)
       );
@@ -528,10 +516,6 @@ export default function Search() {
     }
   }
 
-
-
-
-  // popover close handlers
   useEffect(() => {
     function onDocClick(e) {
       if (!menuOpen) return;
@@ -553,12 +537,10 @@ export default function Search() {
   <main style={S.page}>
     <h1 style={S.h1}>Recipe Search</h1>
 
-    {/* Query + pills + menu */}
     <div style={S.inputWrap}>
       <div style={S.inputRow} ref={inputRef} onClick={() => setMenuOpen(true)}>
         <MagnifierIcon />
 
-        {/* Active pills INSIDE bar */}
         {pills.length > 0 && (
           <div style={S.pillsWrap}>
             {pills.map((p) => (
@@ -586,7 +568,7 @@ export default function Search() {
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault();
-              runAI(); 
+              runAI();
               setMenuOpen(false);
             }
           }}
@@ -594,10 +576,8 @@ export default function Search() {
         <button style={S.btn} onClick={() => setQ("")}>Clear</button>
       </div>
 
-      {/* Popover */}
       {menuOpen && (
         <div style={S.menu} ref={menuRef} role="dialog" aria-label="Quick Filters">
-          {/* Diet */}
           <div style={S.menuRow}>
             <div style={S.menuTitle}>Diet</div>
             <div style={S.menuChips}>
@@ -610,7 +590,6 @@ export default function Search() {
             </div>
           </div>
 
-          {/* Cuisine */}
           <div style={S.menuRow}>
             <div style={S.menuTitle}>Cuisine</div>
             <div style={S.menuChips}>
@@ -623,7 +602,6 @@ export default function Search() {
             </div>
           </div>
 
-          {/* Ingredients */}
           <div style={S.menuRow}>
             <div style={S.menuTitle}>Ingredients</div>
             <div>
@@ -658,7 +636,6 @@ export default function Search() {
                 }}
               />
 
-              {/* Suggestions list */}
               <div
                 style={{
                   ...S.menuChips,
@@ -687,7 +664,6 @@ export default function Search() {
                 )}
               </div>
 
-              {/* Pantry toggle */}
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
                 <button
                   style={S.chip(usePantry)}
@@ -788,7 +764,6 @@ export default function Search() {
 
         {err && <div style={S.error}>{err}</div>}
 
-        {/* ==== AI Recipe Suggestions ==== */}
         {(aiLoading || aiErr || aiRecipes.length > 0) && (
           <section style={{ marginTop: 12 }}>
             <div style={{ ...S.card, borderColor: "#c7d2fe", background: "#eef2ff" }}>
@@ -811,7 +786,6 @@ export default function Search() {
                         key={i}
                         style={{ ...S.card, borderColor: "#cbd5e1" }}
                       >
-                        {/* top row: title/meta + 3-dot menu */}
                         <div
                           style={{
                             display: "flex",
@@ -823,7 +797,6 @@ export default function Search() {
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div style={S.title}>{r.name}</div>
 
-                            {/* Optional metadata if present */}
                             <div style={S.meta}>
                               {typeof r.total_time_minutes === "number" && (
                                 <span>
@@ -845,7 +818,6 @@ export default function Search() {
                             </div>
                           </div>
 
-                          {/* 3-dot menu */}
                           <div style={S.kebabWrap}>
                             <button
                               type="button"
@@ -929,7 +901,6 @@ export default function Search() {
             </div>
           </section>
         )}
-        {/* ========================================= */}
 
         <div style={S.list}>
           {loading && (
@@ -956,7 +927,6 @@ export default function Search() {
 
             return (
               <article key={r.id} style={S.rCard}>
-                {/* top row: title/meta on the left, 3-dot menu on the right */}
                 <div
                   style={{
                     display: "flex",
@@ -979,7 +949,6 @@ export default function Search() {
                     </div>
                   </div>
 
-                  {/* 3-dot menu */}
                   <div style={S.kebabWrap}>
                     <button
                       type="button"
@@ -1011,7 +980,6 @@ export default function Search() {
                   </div>
                 </div>
 
-                
                 {!!r.ingredients?.length && (
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8 }}>
                     {r.ingredients.slice(0, 12).map((ing) => (
@@ -1085,5 +1053,7 @@ export default function Search() {
       </section>
     </div>
   </main>
-);}
+);
 
+  
+}

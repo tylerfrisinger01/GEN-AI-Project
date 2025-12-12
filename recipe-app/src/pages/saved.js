@@ -1,76 +1,16 @@
-// src/pages/Saved.jsx
 import React, { useEffect, useState } from "react";
 import { listSaved, deleteSavedById, addSavedAiSnapshot } from "../data/saved";
-import { normalizeInstructions } from "../lib/hydrateSaved";
+import { loadSavedRecipes, formatInstructions } from "../lib/loadSavedRecipes";
 import { generateAiImage } from "../api/aiImage";
 import { addShoppingItemsBulk } from "../data/shoppingList";
 
-const API_BASE =
-  process.env.REACT_APP_API_BASE?.replace(/\/$/, "") ||
-  "http://localhost:4000/api";
+const API_BASE = process.env.REACT_APP_API_BASE;
 
-async function fetchLocalRecipe(recipeId) {
-  const res = await fetch(`${API_BASE}/recipes/${recipeId}`);
-  if (!res.ok) {
-    throw new Error(`Failed to load recipe #${recipeId}`);
-  }
-  return res.json();
+if (!API_BASE) {
+  console.warn("Missing REACT_APP_API_BASE. Identify page requests will fail until it is provided.");
 }
 
-async function hydrateLocalSaved(rows = []) {
-  const ids = [
-    ...new Set(
-      rows
-        .filter((fav) => !fav.is_ai_recipe && fav.recipe_id != null)
-        .map((fav) => fav.recipe_id)
-    ),
-  ];
-
-  if (!ids.length) return rows;
-
-  const recipeMap = new Map();
-  await Promise.all(
-    ids.map(async (id) => {
-      try {
-        const recipe = await fetchLocalRecipe(id);
-        recipeMap.set(id, { recipe });
-      } catch (err) {
-        recipeMap.set(id, { error: err.message || "Failed to load recipe" });
-      }
-    })
-  );
-
-  return rows.map((fav) => {
-    if (fav.is_ai_recipe || fav.recipe_id == null) return fav;
-    const entry = recipeMap.get(fav.recipe_id);
-    if (!entry) return fav;
-    if (entry.error) {
-      return { ...fav, localError: entry.error };
-    }
-
-    const recipe = entry.recipe;
-    return {
-      ...fav,
-      name: recipe.name || fav.name,
-      description: recipe.description || fav.description,
-      ingredients:
-        (Array.isArray(recipe.ingredients) && recipe.ingredients.length
-          ? recipe.ingredients
-          : fav.ingredients) || [],
-      instructions: (() => {
-        const fromRecipe = normalizeInstructions(recipe.steps);
-        const fromFav = normalizeInstructions(fav.instructions);
-        return fromRecipe.length ? fromRecipe : fromFav;
-      })(),
-      minutes: recipe.minutes ?? fav.minutes,
-      rating: recipe.rating ?? fav.rating,
-      cuisine: recipe.cuisine ?? fav.cuisine,
-      diet: recipe.diet ?? fav.diet,
-      localRecipe: recipe,
-    };
-  });
-}
-
+// We provide some default remix ideas to help users get started with modifying recipes
 const REMIX_SUGGESTIONS = [
   "Make it vegetarian and protein-packed",
   "Give it bold, spicy flavors",
@@ -124,11 +64,12 @@ function collectIngredientLines(recipe) {
 
 function collectStepLines(recipe) {
   const normalized =
-    normalizeInstructions(recipe?.instructions) ||
-    normalizeInstructions(recipe?.steps);
+    formatInstructions(recipe?.instructions) ||
+    formatInstructions(recipe?.steps);
   return normalized.slice(0, 12);
 }
 
+// We construct a detailed prompt for the AI to ensure the remix stays true to the original recipe while incorporating user requests
 function buildRemixPrompt(recipe, userNotes = "") {
   const title = recipe?.name || "this recipe";
   const description = recipe?.description || "";
@@ -207,7 +148,7 @@ function sanitizeAiRecipePayload(recipe, baseName) {
   const ingredients = Array.isArray(recipe.ingredients)
     ? recipe.ingredients.filter(Boolean)
     : [];
-  const steps = normalizeInstructions(recipe.steps || recipe.instructions);
+  const steps = formatInstructions(recipe.steps || recipe.instructions);
 
   if (!ingredients.length || !steps.length) {
     return null;
@@ -224,7 +165,7 @@ function sanitizeAiRecipePayload(recipe, baseName) {
 
 function formatSavedRow(row) {
   if (!row) return row;
-  const instructions = normalizeInstructions(row.instructions || row.steps);
+  const instructions = formatInstructions(row.instructions || row.steps);
   return {
     ...row,
     ingredients: Array.isArray(row.ingredients) ? row.ingredients : [],
@@ -524,10 +465,10 @@ export default function Saved() {
         setErr(null);
       }
       const data = await listSaved();
-      const enriched = await hydrateLocalSaved(data || []);
+      const enriched = await loadSavedRecipes(data || []);
       setSaved(enriched);
       
-      // Track recipes without images as generating
+      // We check which recipes are missing images to trigger background generation if needed
       const idsWithoutImages = enriched
         .filter((row) => !row.image_url && row.id)
         .map((row) => row.id);
@@ -539,7 +480,6 @@ export default function Saved() {
         });
       }
       
-      // Remove recipes that now have images from generating set
       setImageGeneratingIds((prev) => {
         const next = new Set(prev);
         enriched
@@ -563,13 +503,13 @@ export default function Saved() {
     loadSaved();
   }, []);
 
-  // Poll for image updates if there are recipes generating images
+  // We poll for image updates when there are pending generations
   useEffect(() => {
     if (imageGeneratingIds.size === 0) return;
     
     const pollInterval = setInterval(() => {
-      loadSaved(false); // Background update, don't show loading spinner
-    }, 3000); // Check every 3 seconds
+      loadSaved(false);
+    }, 3000);
     
     return () => clearInterval(pollInterval);
   }, [imageGeneratingIds.size]);
@@ -698,6 +638,7 @@ export default function Saved() {
     }
   }
 
+  // We use this function to handle the entire remix flow, including optimistic updates and error handling
   async function handleGenerateRemix(fav) {
     if (!fav || !fav.id) return;
     if (remixState.loading) return;
@@ -719,7 +660,6 @@ export default function Saved() {
         );
       }
       
-      // Create a temporary recipe entry with a placeholder ID to show loading state
       const tempId = `temp-${Date.now()}`;
       const tempRow = formatSavedRow({
         id: tempId,
@@ -727,12 +667,10 @@ export default function Saved() {
         image_url: null,
       });
       
-      // Add to saved list immediately with loading state
       setSaved((prev) => [tempRow, ...prev]);
       setExpandedIds((prev) => [tempId, ...prev.filter((entry) => entry !== tempId)]);
       setImageGeneratingIds((prev) => new Set([...prev, tempId]));
       
-      // Generate image
       const imageUrl =
         (await generateAiImage({
           name: sanitized.name,
@@ -746,7 +684,6 @@ export default function Saved() {
       });
       const normalizedRow = formatSavedRow(savedRow);
 
-      // Replace temp entry with real one
       setSaved((prev) => {
         const filtered = prev.filter((row) => row.id !== tempId);
         return [normalizedRow, ...filtered];
@@ -766,7 +703,6 @@ export default function Saved() {
       );
     } catch (error) {
       console.error("Failed to remix recipe:", error);
-      // Remove temp entry on error
       setSaved((prev) => prev.filter((row) => !row.id?.startsWith("temp-")));
       setImageGeneratingIds((prev) => {
         const next = new Set(prev);
@@ -1044,6 +980,7 @@ export default function Saved() {
                         {remixState.error && (
                           <div style={S.remixError}>{remixState.error}</div>
                         )}
+                        {/* You have found an easter egg! Message Dylan Kramer at dkramer6@huskers.unl.edu if you find this for a reward */}
                         <div style={S.remixPanelActions}>
                           <button
                             type="button"

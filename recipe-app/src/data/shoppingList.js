@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supaBaseClient'
 
-/** Get shopping list (unchecked first, newest first) */
+// Get shopping list (unchecked first, newest first)
 export async function getShoppingList() {
   const { data, error } = await supabase
     .from('shopping_items')
@@ -11,7 +11,7 @@ export async function getShoppingList() {
   return data
 }
 
-/** Add item */
+// Add item
 export async function addShoppingItem({ name, qty = '', notes = '' }) {
   const { data, error } = await supabase
     .from('shopping_items')
@@ -22,7 +22,7 @@ export async function addShoppingItem({ name, qty = '', notes = '' }) {
   return data
 }
 
-/** Add multiple items at once */
+// Add multiple items at once
 export async function addShoppingItemsBulk(items = []) {
   const rows = (Array.isArray(items) ? items : [])
     .map((entry) => {
@@ -79,6 +79,7 @@ export async function addShoppingItemsBulk(items = []) {
   return data
 }
 
+// Update arbitrary fields: { qty, notes, checked, name }
 export async function updateShoppingItem(id, patch) {
   const { data, error } = await supabase
     .from('shopping_items')
@@ -90,7 +91,7 @@ export async function updateShoppingItem(id, patch) {
   return data
 }
 
-/** Toggle check state */
+// Toggle check state
 export async function toggleShoppingChecked(id, checked) {
   const { data, error } = await supabase
     .from('shopping_items')
@@ -102,7 +103,7 @@ export async function toggleShoppingChecked(id, checked) {
   return data
 }
 
-/** Remove a single item */
+// Remove a single item
 export async function removeShoppingItem(id) {
   const { error } = await supabase
     .from('shopping_items')
@@ -119,7 +120,6 @@ export async function clearCheckedShopping() {
     .eq('checked', true)
   if (error) throw error
 }
-
 
 export async function moveShoppingItemToPantry(id) {
   // read the item
@@ -144,8 +144,9 @@ export async function moveShoppingItemToPantry(id) {
   if (delErr) throw delErr
 }
 
-/** Clear all items */
+// Clear all items
 export async function clearShopping() {
+  // Supabase prevents delete() with no filters for some reason, so we select ids first
   const { data: rows, error: readErr } = await supabase
     .from('shopping_items')
     .select('id')

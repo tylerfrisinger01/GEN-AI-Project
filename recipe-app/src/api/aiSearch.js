@@ -2,8 +2,7 @@ const API = 'http://localhost:4000/api';
 
 
 const normalizeSteps = (steps = []) =>
-  // eslint-disable-next-line no-useless-escape
-  steps.map(s => String(s).replace(/^\s*(?:\d+[\.\)]|-)\s*/, '').trim());
+  steps.map(s => String(s).replace(/^\s*(?:\d+[.)]|-)\s*/, '').trim());
 
 const normalizeIngredients = (ings = []) =>
   ings.map(x => (typeof x === 'string'
@@ -45,4 +44,3 @@ export async function generateSearchRecipes({
     return [];
   }
 }
-

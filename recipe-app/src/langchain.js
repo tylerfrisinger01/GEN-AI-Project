@@ -9,21 +9,13 @@ if (!openAiApiKey) {
   );
 }
 
-// Configure your OpenAI model
 const model = new ChatOpenAI({
   model: "gpt-4.1",
   apiKey: openAiApiKey,
 });
 
-/**
- * Get AI response from LangChain LLM
- * @param {string} userPrompt - The prompt from the user
- * @param {string|SystemMessage} systemPrompt - Optional system prompt
- * @returns {Promise<string>} - AI output text
- */
-async function getAiResponse(userPrompt, systemPrompt = null) { // for home page
+async function generateHomeResponse(userPrompt, systemPrompt = null) {
   try {
-    // If systemPrompt is a string, wrap in SystemMessage
     const systemMsg = typeof systemPrompt === "string"
       ? new SystemMessage(systemPrompt)
       : systemPrompt;
@@ -46,9 +38,8 @@ async function getAiResponse(userPrompt, systemPrompt = null) { // for home page
 }
 
 
-async function generateSearchResponse(userPrompt, systemPrompt = null) { // for search page
+async function generateSearchResponse(userPrompt, systemPrompt = null) {
   try {
-    // If systemPrompt is a string, wrap in SystemMessage
     const systemMsg = typeof systemPrompt === "string"
       ? new SystemMessage(systemPrompt)
       : systemPrompt;
@@ -74,4 +65,4 @@ async function generateSearchResponse(userPrompt, systemPrompt = null) { // for 
 
 
 export { generateSearchResponse };
-export { getAiResponse };
+export { generateHomeResponse as getAiResponse };

@@ -4,16 +4,15 @@ import { useNavigate } from "react-router-dom";
 import { addSavedAiSnapshot } from "../data/saved";
 
 const API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
-const API_BASE =
-  process.env.REACT_APP_API_BASE?.replace(/\/$/, "") ||
-  "http://localhost:4000/api";
+const API_BASE = process.env.REACT_APP_API_BASE;
 
-if (!API_KEY) {
-  console.warn(
-    "Missing REACT_APP_GEMINI_API_KEY. Identify page requests will fail until it is provided."
-  );
+if (!API_BASE) {
+  console.warn("Missing REACT_APP_API_BASE. Identify page requests will fail until it is provided.");
 }
 
+if (!API_KEY) {
+  console.warn("Missing REACT_APP_GEMINI_API_KEY. Identify page requests will fail until it is provided.");
+}
 
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
@@ -33,6 +32,7 @@ function fileToDataUrl(file) {
   });
 }
 
+// Use the Gemini API directly to identify food from an image
 async function detectWithFetch(file) {
   const base64 = await fileToBase64(file);
   const mime = file.type || "image/jpeg";
@@ -124,6 +124,7 @@ function sanitizeAiRecipePayload(recipe) {
   };
 }
 
+// Generate a full recipe from the identified food name
 async function fetchAiRecipe(foodName) {
   const prompt = `Create a detailed recipe for "${foodName}". 
 Return a JSON object with this exact structure:
@@ -189,7 +190,6 @@ export default function Identify() {
     setRecipeError(null);
 
     try {
-      // Generate recipe from identified food
       const text = await fetchAiRecipe(status);
       const [candidate] = parseAiRecipes(text);
       const sanitized = sanitizeAiRecipePayload(candidate);
@@ -198,16 +198,13 @@ export default function Identify() {
         throw new Error("Failed to generate a valid recipe. Please try again.");
       }
 
-      // Convert uploaded file to data URL to use as the image
       const imageUrl = await fileToDataUrl(uploadedFile);
 
-      // Save to saved recipes
       await addSavedAiSnapshot({
         ...sanitized,
         image_url: imageUrl,
       });
 
-      // Navigate to saved page
       navigate("/saved");
     } catch (error) {
       console.error("Failed to generate recipe:", error);
@@ -389,5 +386,3 @@ export default function Identify() {
     </section>
   );
 }
-
-

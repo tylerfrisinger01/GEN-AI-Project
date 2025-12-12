@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { BrowserRouter as Router, Routes, Route, NavLink } from "react-router-dom";
-import "./css/App.css";
 import Home from "./pages/home";
 import Pantry from "./pages/pantry";
 import Search from "./pages/search";
@@ -24,7 +23,8 @@ function Header() {
   );
 }
 
-const initialAiSession = {
+// We initialized this object to track the AI session state so we can persist context between interactions
+const initAISession = {
   prompt: null,
   recipes: [],
   images: [],
@@ -32,7 +32,8 @@ const initialAiSession = {
 };
 
 export default function App() {
-  const [aiSession, setAiSession] = useState(() => ({ ...initialAiSession }));
+  // We used a state initializer here to ensure the session object is created only once
+  const [aiSession, setAiSession] = useState(() => ({ ...initAISession }));
 
   return (
     <Router>

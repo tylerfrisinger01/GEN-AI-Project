@@ -1,8 +1,7 @@
-// src/data/saved.js
 import { supabase } from '../lib/supaBaseClient'
 
 /**
- * favorites table schema (still named `favorites` in DB):
+ * favorites table schema (named `favorites` in supabase):
  *  id uuid PK
  *  recipe_id integer        -- local DB recipe id (null for AI recipes)
  *  name text                -- AI recipe name (optional for local)
@@ -34,7 +33,7 @@ export async function listLocalSaved(limit = 200) {
     .limit(limit)
 
   if (error) throw error
-  return data 
+  return data
 }
 
 /** List saved AI recipe  */
@@ -96,7 +95,6 @@ export async function addSavedLocal(recipeId) {
   return data
 }
 
-/** Remove saved local recipe by recipe_id */
 export async function removeSavedLocal(recipeId) {
   const { error } = await supabase
     .from('favorites')
@@ -107,7 +105,6 @@ export async function removeSavedLocal(recipeId) {
   if (error) throw error
 }
 
-/** Add saved AI recipe snapshot */
 export async function addSavedAiSnapshot(recipe) {
   const { name, ingredients, steps, image_url } = recipe
   const { data, error } = await supabase
@@ -140,7 +137,6 @@ export async function removeSavedAiByName(name) {
   if (error) throw error
 }
 
-/** Toggle local saved state; returns true if now saved, false if removed */
 export async function toggleSavedLocal(recipeId) {
   const exists = await isSavedLocal(recipeId)
   if (exists) {
@@ -152,7 +148,6 @@ export async function toggleSavedLocal(recipeId) {
   }
 }
 
-/** Toggle AI saved snapshot; returns true if now saved, false if removed */
 export async function toggleSavedAiSnapshot(recipe) {
   const exists = await isSavedAiByName(recipe.name || null)
   if (exists) {
@@ -164,7 +159,6 @@ export async function toggleSavedAiSnapshot(recipe) {
   }
 }
 
-/** Remove a saved recipe row by row id */
 export async function deleteSavedById(id) {
   const { error } = await supabase
     .from('favorites')
