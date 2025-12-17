@@ -1,6 +1,5 @@
 import { supabase } from '../lib/supaBaseClient'
 
-// Get all pantry items
 export async function getPantry() {
   const { data, error } = await supabase
     .from('pantry_items')
@@ -10,7 +9,6 @@ export async function getPantry() {
   return data
 }
 
-// Add a new item
 export async function addPantryItem({ name, qty = '', notes = '' }) {
   const { data, error } = await supabase
     .from('pantry_items')
@@ -21,7 +19,6 @@ export async function addPantryItem({ name, qty = '', notes = '' }) {
   return data
 }
 
-// Update an item (e.g., edit qty or notes)
 export async function updatePantryItem(id, patch) {
   const { data, error } = await supabase
     .from('pantry_items')
@@ -33,13 +30,11 @@ export async function updatePantryItem(id, patch) {
   return data
 }
 
-// Delete an item
 export async function removePantryItem(id) {
   const { error } = await supabase.from('pantry_items').delete().eq('id', id)
   if (error) throw error
 }
 
-// Clear all items
 export async function clearPantry() {
   const { error } = await supabase.from('pantry_items').delete()
   if (error) throw error

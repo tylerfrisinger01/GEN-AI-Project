@@ -1,21 +1,14 @@
 import { createClient } from '@supabase/supabase-js'
 
-const supabaseUrl = 'https://igtxjnulkagtmcbanqxd.supabase.co'
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImlndHhqbnVsa2FndG1jYmFucXhkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjI4OTgzNDgsImV4cCI6MjA3ODQ3NDM0OH0.N46jGEB4QlPjQ4rYSPX4CUg13L05knmjU_VwLNuIQSY'
+const supabaseUrl = process.env.REACT_APP_SUPABASE_URL
+const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error(
+    'Missing Supabase configuration. Please set REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY.'
+  )
+}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: { persistSession: true, autoRefreshToken: true }
 })
-
-
-// export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-//   auth: { persistSession: true, autoRefreshToken: true }
-// })
-
-// // Ensure we always have a session
-// await supabase.auth.getSession() ?? supabase.auth.signInAnonymously()
-
-// export async function ensureAnonSession() {
-//   const { data: { session } } = await supabase.auth.getSession()
-//   if (!session) await supabase.auth.signInAnonymously()
-// }

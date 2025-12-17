@@ -1,8 +1,7 @@
-// src/data/favorites.js
 import { supabase } from '../lib/supaBaseClient'
 
 /**
- * favorites schema:
+ * favorites table schema (named `favorites` in supabase):
  *  id uuid PK
  *  recipe_id integer        -- local DB recipe id (null for AI recipes)
  *  name text                -- AI recipe name (optional for local)
@@ -12,8 +11,8 @@ import { supabase } from '../lib/supaBaseClient'
  *  created_at timestamptz
  */
 
-/** List all favorites (local + AI) */
-export async function listFavorites(limit = 200) {
+/** List all saved recipes */
+export async function listSaved(limit = 200) {
   const { data, error } = await supabase
     .from('favorites')
     .select('*')
@@ -24,8 +23,8 @@ export async function listFavorites(limit = 200) {
   return data
 }
 
-/** List local DB recipe favorites (by recipe_id only) */
-export async function listLocalFavorites(limit = 200) {
+/** List saved local recipes  */
+export async function listLocalSaved(limit = 200) {
   const { data, error } = await supabase
     .from('favorites')
     .select('recipe_id, created_at')
@@ -34,11 +33,11 @@ export async function listLocalFavorites(limit = 200) {
     .limit(limit)
 
   if (error) throw error
-  return data // [{recipe_id, created_at}, ...]
+  return data
 }
 
-/** List AI recipe favorites (full snapshots) */
-export async function listAiFavorites(limit = 200) {
+/** List saved AI recipe  */
+export async function listAiSaved(limit = 200) {
   const { data, error } = await supabase
     .from('favorites')
     .select('name, ingredients, instructions, created_at')
@@ -47,11 +46,11 @@ export async function listAiFavorites(limit = 200) {
     .limit(limit)
 
   if (error) throw error
-  return data // [{name, ingredients, instructions, created_at}, ...]
+  return data 
 }
 
-/** Boolean: is this local recipe (by id) favorited? */
-export async function isFavoriteLocal(recipeId) {
+/**  is this local recipe saved */
+export async function isSavedLocal(recipeId) {
   const { data, error } = await supabase
     .from('favorites')
     .select('id')
@@ -63,8 +62,8 @@ export async function isFavoriteLocal(recipeId) {
   return !!data
 }
 
-/** Boolean: is this AI recipe (by name) favorited? */
-export async function isFavoriteAiByName(name) {
+/** is this AI recipe saved */
+export async function isSavedAiByName(name) {
   const { data, error } = await supabase
     .from('favorites')
     .select('id')
@@ -76,8 +75,8 @@ export async function isFavoriteAiByName(name) {
   return !!data
 }
 
-/** Add local favorite (recipe in your SQLite DB) */
-export async function addFavoriteLocal(recipeId) {
+/** Add saved local recipe */
+export async function addSavedLocal(recipeId) {
   const { data, error } = await supabase
     .from('favorites')
     .insert([
@@ -96,8 +95,7 @@ export async function addFavoriteLocal(recipeId) {
   return data
 }
 
-/** Remove local favorite */
-export async function removeFavoriteLocal(recipeId) {
+export async function removeSavedLocal(recipeId) {
   const { error } = await supabase
     .from('favorites')
     .delete()
@@ -107,9 +105,8 @@ export async function removeFavoriteLocal(recipeId) {
   if (error) throw error
 }
 
-/** Add AI favorite (full snapshot) */
-export async function addFavoriteAiSnapshot(recipe) {
-  const { name, ingredients, steps } = recipe
+export async function addSavedAiSnapshot(recipe) {
+  const { name, ingredients, steps, image_url } = recipe
   const { data, error } = await supabase
     .from('favorites')
     .insert([
@@ -119,6 +116,7 @@ export async function addFavoriteAiSnapshot(recipe) {
         name: name || null,
         ingredients: ingredients || [],
         instructions: steps || [],
+        image_url: image_url || null,
       },
     ])
     .select()
@@ -128,8 +126,8 @@ export async function addFavoriteAiSnapshot(recipe) {
   return data
 }
 
-/** Remove AI favorite by name (simple heuristic) */
-export async function removeFavoriteAiByName(name) {
+/** Remove saved AI recipe by name  */
+export async function removeSavedAiByName(name) {
   const { error } = await supabase
     .from('favorites')
     .delete()
@@ -139,26 +137,33 @@ export async function removeFavoriteAiByName(name) {
   if (error) throw error
 }
 
-/** Toggle local favorite; returns true if now favorited, false if removed */
-export async function toggleFavoriteLocal(recipeId) {
-  const exists = await isFavoriteLocal(recipeId)
+export async function toggleSavedLocal(recipeId) {
+  const exists = await isSavedLocal(recipeId)
   if (exists) {
-    await removeFavoriteLocal(recipeId)
+    await removeSavedLocal(recipeId)
     return false
   } else {
-    await addFavoriteLocal(recipeId)
+    await addSavedLocal(recipeId)
     return true
   }
 }
 
-/** Toggle AI favorite; returns true if now favorited, false if removed */
-export async function toggleFavoriteAiSnapshot(recipe) {
-  const exists = await isFavoriteAiByName(recipe.name || null)
+export async function toggleSavedAiSnapshot(recipe) {
+  const exists = await isSavedAiByName(recipe.name || null)
   if (exists) {
-    await removeFavoriteAiByName(recipe.name || null)
+    await removeSavedAiByName(recipe.name || null)
     return false
   } else {
-    await addFavoriteAiSnapshot(recipe)
+    await addSavedAiSnapshot(recipe)
     return true
   }
+}
+
+export async function deleteSavedById(id) {
+  const { error } = await supabase
+    .from('favorites')
+    .delete()
+    .eq('id', id)
+
+  if (error) throw error
 }

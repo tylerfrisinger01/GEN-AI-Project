@@ -1,9 +1,8 @@
 const API = 'http://localhost:4000/api';
 
 
-// --- tiny normalizers so UI doesn't double-number or choke on string ingredients ---
 const normalizeSteps = (steps = []) =>
-  steps.map(s => String(s).replace(/^\s*(?:\d+[\.\)]|-)\s*/, '').trim());
+  steps.map(s => String(s).replace(/^\s*(?:\d+[.)]|-)\s*/, '').trim());
 
 const normalizeIngredients = (ings = []) =>
   ings.map(x => (typeof x === 'string'
@@ -45,4 +44,3 @@ export async function generateSearchRecipes({
     return [];
   }
 }
-

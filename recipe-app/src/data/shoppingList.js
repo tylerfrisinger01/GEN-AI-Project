@@ -1,6 +1,6 @@
 import { supabase } from '../lib/supaBaseClient'
 
-/** Get shopping list (unchecked first, newest first) */
+// Get shopping list (unchecked first, newest first)
 export async function getShoppingList() {
   const { data, error } = await supabase
     .from('shopping_items')
@@ -11,7 +11,7 @@ export async function getShoppingList() {
   return data
 }
 
-/** Add item */
+// Add item
 export async function addShoppingItem({ name, qty = '', notes = '' }) {
   const { data, error } = await supabase
     .from('shopping_items')
@@ -22,7 +22,64 @@ export async function addShoppingItem({ name, qty = '', notes = '' }) {
   return data
 }
 
-/** Update arbitrary fields: { qty, notes, checked, name } */
+// Add multiple items at once
+export async function addShoppingItemsBulk(items = []) {
+  const rows = (Array.isArray(items) ? items : [])
+    .map((entry) => {
+      if (!entry) return null
+      if (typeof entry === 'string') {
+        const trimmed = entry.trim()
+        return trimmed ? { name: trimmed, qty: '', notes: '' } : null
+      }
+      if (typeof entry === 'object') {
+        const baseName =
+          entry.name ??
+          entry.ingredient ??
+          entry.item ??
+          entry.food ??
+          entry.title ??
+          ''
+        const name = typeof baseName === 'string' ? baseName.trim() : ''
+        if (!name) return null
+        const qtyParts = [
+          entry.qty ?? entry.quantity ?? entry.amount,
+          entry.unit ?? entry.measure,
+        ]
+          .map((value) => {
+            if (value == null) return ''
+            return String(value).trim()
+          })
+          .filter(Boolean)
+        const qty = qtyParts.join(' ')
+        const notes =
+          [
+            entry.notes,
+            entry.prep,
+            entry.preparation,
+            entry.detail,
+            entry.description,
+          ]
+            .map((value) =>
+              typeof value === 'string' ? value.trim() : ''
+            )
+            .find(Boolean) || ''
+        return { name, qty, notes }
+      }
+      return null
+    })
+    .filter(Boolean)
+
+  if (!rows.length) return []
+  const { data, error } = await supabase
+    .from('shopping_items')
+    .insert(rows)
+    .select()
+
+  if (error) throw error
+  return data
+}
+
+// Update arbitrary fields: { qty, notes, checked, name }
 export async function updateShoppingItem(id, patch) {
   const { data, error } = await supabase
     .from('shopping_items')
@@ -34,7 +91,7 @@ export async function updateShoppingItem(id, patch) {
   return data
 }
 
-/** Toggle check state */
+// Toggle check state
 export async function toggleShoppingChecked(id, checked) {
   const { data, error } = await supabase
     .from('shopping_items')
@@ -46,7 +103,7 @@ export async function toggleShoppingChecked(id, checked) {
   return data
 }
 
-/** Remove a single item */
+// Remove a single item
 export async function removeShoppingItem(id) {
   const { error } = await supabase
     .from('shopping_items')
@@ -55,7 +112,7 @@ export async function removeShoppingItem(id) {
   if (error) throw error
 }
 
-/** Bulk: clear all checked items */
+/** clear all checked items */
 export async function clearCheckedShopping() {
   const { error } = await supabase
     .from('shopping_items')
@@ -64,7 +121,6 @@ export async function clearCheckedShopping() {
   if (error) throw error
 }
 
-/** Optional convenience: move one checked item to pantry then delete it */
 export async function moveShoppingItemToPantry(id) {
   // read the item
   const { data: item, error: readErr } = await supabase
@@ -88,8 +144,22 @@ export async function moveShoppingItemToPantry(id) {
   if (delErr) throw delErr
 }
 
-/** Clear all items */
+// Clear all items
 export async function clearShopping() {
-  const { error } = await supabase.from('shopping_items').delete()
-  if (error) throw error
+  // Supabase prevents delete() with no filters for some reason, so we select ids first
+  const { data: rows, error: readErr } = await supabase
+    .from('shopping_items')
+    .select('id')
+  if (readErr) throw readErr
+
+  const ids = Array.isArray(rows) ? rows.map((row) => row.id).filter(Boolean) : []
+  if (!ids.length) return []
+
+  const { error: deleteErr } = await supabase
+    .from('shopping_items')
+    .delete()
+    .in('id', ids)
+  if (deleteErr) throw deleteErr
+
+  return ids
 }

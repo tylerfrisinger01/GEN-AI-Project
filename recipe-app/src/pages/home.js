@@ -1,63 +1,188 @@
-import React, { useEffect, useRef, useState } from "react";
-import "../css/home.css";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
+import { addSavedAiSnapshot, listSaved } from "../data/saved";
+import { generateAiImage } from "../api/aiImage";
+import { loadSavedRecipes, formatInstructions } from "../lib/loadSavedRecipes";
+import {
+  getShoppingList,
+  addShoppingItem as createShoppingItem,
+  addShoppingItemsBulk,
+  toggleShoppingChecked,
+  removeShoppingItem as deleteShoppingItem,
+  clearShopping,
+} from "../data/shoppingList";
+import { addPantryItem } from "../data/pantry";
 
-// ---------------- LocalStorage Keys ----------------
-const LS_DIETARY = "dietary-settings";
-const LS_FAV_MEALS = "favorite-meals";
-const LS_FAV_CUISINES = "favorite-cuisines";
-const LS_SHOPPING_LIST = "shopping-list";
-
+// Common pantry items help users get started quickly
 const items = ["chicken breast", "ground beef", "onion", "garlic", "olive oil", "salt", "black pepper", "butter", "potatoes", "rice", "pasta", "tomatoes", "carrots", "bell peppers", "cheese", "eggs", "flour", "broth", "soy sauce", "herbs"];
+const AI_IMAGE_FALLBACK = "/meal_image.jpg";
+const AI_IMAGE_MAX_ATTEMPTS = 3;
 
-const ALL_CUISINES = [
-  "american","italian","french","mexican","chinese","japanese","korean","thai",
-  "indian","mediterranean","greek","spanish","vietnamese","lebanese","ethiopian",
-  "german","brazilian","caribbean"
-];
+function extractIngredientName(entry) {
+  if (!entry) return "";
+  if (typeof entry === "string") return entry;
+  return entry.ingredient || "";
+}
 
-const DEFAULT_DIETARY = {
-  vegetarian: false,
-  vegan: false,
-  glutenFree: false,
-  dairyFree: false,
-  nutFree: false,
-  halal: false,
-  kosher: false,
-};
+// Randomly select a recipe with a description to showcase as a "Chef's pick"
+function pickDinnerCandidate(recipes = []) {
+  if (!Array.isArray(recipes) || recipes.length === 0) return null;
+  const withDescription = recipes.filter(
+    (recipe) =>
+      typeof recipe?.description === "string" && recipe.description.trim()
+  );
+  const pool = withDescription.length ? withDescription : recipes;
+  const index = Math.floor(Math.random() * pool.length);
+  return pool[index];
+}
 
-// ---------------- Helpers ----------------
-function loadLS(key, fallback) {
-  try {
-    return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback));
-  } catch {
-    return fallback;
+function truncateText(text, max = 120) {
+  if (!text) return "";
+  if (text.length <= max) return text;
+  return `${text.slice(0, max).trim()}…`;
+}
+
+function createEmptyAiSession() {
+  return {
+    prompt: null,
+    recipes: [],
+    images: [],
+    generatedAt: null,
+  };
+}
+
+// Unified step formatting logic handles different API return formats
+function getRecipeSteps(recipe) {
+  if (!recipe) return [];
+  if (Array.isArray(recipe.steps) && recipe.steps.length) {
+    return recipe.steps;
   }
+  const instructions = recipe.instructions;
+  if (typeof instructions === "string") {
+    return formatInstructions(instructions);
+  }
+  if (
+    Array.isArray(instructions) &&
+    instructions.every((entry) => typeof entry === "string")
+  ) {
+    return formatInstructions(instructions);
+  }
+  return [];
 }
 
-function saveLS(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+function formatStepEntries(rawSteps = []) {
+  if (!Array.isArray(rawSteps) || rawSteps.length === 0) return [];
+  return rawSteps
+    .map((entry, idx) => {
+      if (!entry) return null;
+      if (typeof entry === "string") {
+        const text = entry.trim();
+        if (!text) return null;
+        return {
+          number: idx + 1,
+          text,
+          title: null,
+        };
+      }
+      if (typeof entry === "object") {
+        const text =
+          entry.text ||
+          entry.description ||
+          entry.body ||
+          entry.step ||
+          entry.value ||
+          "";
+        const cleaned = typeof text === "string" ? text.trim() : "";
+        if (!cleaned) return null;
+        const numberCandidate =
+          entry.number ?? entry.step_number ?? entry.index ?? entry.order;
+        const number = Number(numberCandidate);
+        return {
+          number: Number.isFinite(number) ? number : idx + 1,
+          text: cleaned,
+          title:
+            typeof entry.title === "string"
+              ? entry.title.trim()
+              : typeof entry.name === "string"
+              ? entry.name.trim()
+              : null,
+        };
+      }
+      return null;
+    })
+    .filter(Boolean);
 }
 
-// ---------------- Home Component ----------------
-export default function Home({ systemPrompt = null }) {
-  const [dietary, setDietary] = useState(() => ({ ...DEFAULT_DIETARY, ...loadLS(LS_DIETARY, {}) }));
-  const [favMeals, setFavMeals] = useState(() => loadLS(LS_FAV_MEALS, []));
-  const [favCuisines, setFavCuisines] = useState(() => loadLS(LS_FAV_CUISINES, []));
-  const [shoppingList, setShoppingList] = useState(() => loadLS(LS_SHOPPING_LIST, []));
+// Sort the shopping list to put unchecked items first
+function sortShoppingEntries(entries = []) {
+  return [...entries].sort((a, b) => {
+    if (!!a.checked === !!b.checked) {
+      const aTime = new Date(a.created_at || 0).getTime();
+      const bTime = new Date(b.created_at || 0).getTime();
+      return bTime - aTime;
+    }
+    return a.checked ? 1 : -1;
+  });
+}
 
-  const [aiRecipes, setAiRecipes] = useState([]);
+async function generateAiImageWithRetry(recipe, maxAttempts = AI_IMAGE_MAX_ATTEMPTS) {
+  const payload = {
+    name: recipe?.name,
+    ingredients: recipe?.ingredients,
+  };
+
+  // Retry loop for image generation handles potential API flakiness
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const url = await generateAiImage(payload);
+    if (url) {
+      return url;
+    }
+  }
+  return AI_IMAGE_FALLBACK;
+}
+
+export default function Home({
+  systemPrompt = null,
+  aiSession = null,
+  setAiSession = null,
+}) {
+  const [shoppingList, setShoppingList] = useState([]);
+  const [shoppingLoading, setShoppingLoading] = useState(true);
+  const [shoppingError, setShoppingError] = useState(null);
+  const [shoppingAddLoading, setShoppingAddLoading] = useState(false);
+  const [shoppingClearing, setShoppingClearing] = useState(false);
+  const [savedRecipes, setSavedRecipes] = useState([]);
+  const [savedLoading, setSavedLoading] = useState(true);
+
+  // Use a fallback session state if one isn't provided by the parent App component
+  const [fallbackAiSession, setFallbackAiSession] = useState(() =>
+    createEmptyAiSession()
+  );
+  const sessionState = aiSession ?? fallbackAiSession;
+  const sessionSetter = setAiSession ?? setFallbackAiSession;
+
+  const [aiRecipes, setAiRecipes] = useState(
+    () => sessionState?.recipes || []
+  );
+  const [aiImages, setAiImages] = useState(
+    () => sessionState?.images || []
+  );
+  const [aiImagesLoading, setAiImagesLoading] = useState(false);
   const [dinnerIdea, setDinnerIdea] = useState(null);
-
   const [loadingAi, setLoadingAi] = useState(false);
-  const [loadingDinner, setLoadingDinner] = useState(false);
+  const [expandedAiIndex, setExpandedAiIndex] = useState(null);
+  const [savingAiIndex, setSavingAiIndex] = useState(null);
+  const [aiSaveError, setAiSaveError] = useState(null);
 
-  // Persist state
-  useEffect(() => saveLS(LS_DIETARY, dietary), [dietary]);
-  useEffect(() => saveLS(LS_FAV_MEALS, favMeals), [favMeals]);
-  useEffect(() => saveLS(LS_FAV_CUISINES, favCuisines), [favCuisines]);
-  useEffect(() => saveLS(LS_SHOPPING_LIST, shoppingList), [shoppingList]);
+  const hasAutoGeneratedRef = useRef(false);
 
-  // ---------------- AI Fetch ----------------
+  useEffect(() => {
+    if (sessionState) {
+      setAiRecipes(sessionState.recipes || []);
+      setAiImages(sessionState.images || []);
+    }
+  }, [sessionState]);
+
   async function fetchAiRecipes(prompt, systemPrompt = null) {
     try {
       const res = await fetch("http://localhost:4000/api/ai-recipes", {
@@ -66,279 +191,754 @@ export default function Home({ systemPrompt = null }) {
         body: JSON.stringify({ prompt, systemPrompt }),
       });
       const data = await res.json();
-      return data.text || "[]"; 
+      return data.text || "[]";
     } catch (err) {
       console.error(err);
       return "[]";
     }
   }
 
-  function generateDefaultPrompt() {
+  // Separate image generation allows text to load first for faster perceived response
+  const refreshAiImages = useCallback(async (recipes = []) => {
+    if (!Array.isArray(recipes) || recipes.length === 0) {
+      setAiImages([]);
+      setAiImagesLoading(false);
+      return [];
+    }
+    setAiImagesLoading(true);
+    try {
+      const urls = await Promise.all(
+        recipes.map((recipe) => generateAiImageWithRetry(recipe))
+      );
+      setAiImages(urls);
+      return urls;
+    } catch (err) {
+      console.error("Failed to generate AI images:", err);
+      const fallbacks = recipes.map(() => AI_IMAGE_FALLBACK);
+      setAiImages(fallbacks);
+      return fallbacks;
+    } finally {
+      setAiImagesLoading(false);
+    }
+  }, []);
+
+  const generateDefaultPrompt = useCallback(() => {
     const pantry = items.join(", ");
-    const diets = Object.keys(dietary).filter(k => dietary[k]).join(", ") || "none";
-    const cuisines = favCuisines.join(", ") || "any";
-    return `Generate 3 recipes using ingredients: ${pantry}.
-Dietary restrictions: ${diets}.
-Preferred cuisines: ${cuisines}.
+    return `Generate 3 balanced dinner recipes using the following pantry staples: ${pantry}.
+Focus on flavorful, practical meals that feel achievable on a weeknight.
 Return JSON array like: [{name, description, ingredients, steps}]`;
-  }
+  }, []);
 
-  // Auto-generate recipes on page load
-  useEffect(() => {
-    const prompt = generateDefaultPrompt();
-    setLoadingAi(true);
-    fetchAiRecipes(prompt, systemPrompt).then(text => {
+  const fetchSavedRecipes = useCallback(async () => {
+    const data = await listSaved();
+    const rows = Array.isArray(data) ? data : [];
+    return loadSavedRecipes(rows);
+  }, []);
+
+  const loadShoppingList = useCallback(async () => {
+    setShoppingLoading(true);
+    setShoppingError(null);
+    try {
+      const rows = await getShoppingList();
+      setShoppingList(sortShoppingEntries(rows || []));
+    } catch (err) {
+      console.error("Failed to load shopping list:", err);
+      setShoppingError(err?.message || "Failed to load shopping list");
+      setShoppingList([]);
+    } finally {
+      setShoppingLoading(false);
+    }
+  }, []);
+
+  const resetAiSession = useCallback(() => {
+    sessionSetter(createEmptyAiSession());
+  }, [sessionSetter]);
+
+  const storeAiSession = useCallback(
+    ({ prompt, recipes, images }) => {
+      sessionSetter({
+        prompt: prompt || null,
+        recipes: Array.isArray(recipes) ? recipes : [],
+        images: Array.isArray(images) ? images : [],
+        generatedAt: Date.now(),
+      });
+    },
+    [sessionSetter]
+  );
+
+  const runAiGeneration = useCallback(
+    async ({ prompt, silent = false } = {}) => {
+      const effectivePrompt = prompt || generateDefaultPrompt();
+      if (!silent) setLoadingAi(true);
       try {
-        const recipes = JSON.parse(text);
+        const text = await fetchAiRecipes(effectivePrompt, systemPrompt);
+        let recipes = [];
+        try {
+          recipes = JSON.parse(text);
+        } catch {
+          recipes = [];
+        }
+        if (!Array.isArray(recipes)) {
+          recipes = [];
+        }
         setAiRecipes(recipes);
-      } catch {
+        setExpandedAiIndex(null);
+        if (!recipes.length) {
+          setAiImages([]);
+          resetAiSession();
+          return;
+        }
+        const urls = await refreshAiImages(recipes);
+        storeAiSession({
+          prompt: effectivePrompt,
+          recipes,
+          images: Array.isArray(urls) ? urls : [],
+        });
+      } catch (err) {
+        console.error("Failed to generate AI recipes:", err);
         setAiRecipes([]);
+        setExpandedAiIndex(null);
+        setAiImages([]);
+        resetAiSession();
+      } finally {
+        if (!silent) setLoadingAi(false);
       }
-      setLoadingAi(false);
-    });
-  }, [dietary, favCuisines, systemPrompt]);
+    },
+    [generateDefaultPrompt, refreshAiImages, resetAiSession, storeAiSession, systemPrompt]
+  );
 
-  // ---------------- What's for Dinner ----------------
-  function generateDinner(prompt = "Christmas Ham") {
-    setLoadingDinner(true);
-    fetchAiRecipes(prompt, systemPrompt).then(text => {
-      try {
-        const recipes = JSON.parse(text);
-        setDinnerIdea(recipes[0] || null);
-      } catch {
+  // Trigger AI generation automatically on first load
+  useEffect(() => {
+    if (hasAutoGeneratedRef.current) return;
+    if (aiRecipes.length > 0) {
+      hasAutoGeneratedRef.current = true;
+      return;
+    }
+    hasAutoGeneratedRef.current = true;
+    runAiGeneration({ prompt: generateDefaultPrompt() });
+  }, [aiRecipes.length, generateDefaultPrompt, runAiGeneration]);
+
+  useEffect(() => {
+    loadShoppingList();
+  }, [loadShoppingList]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setSavedLoading(true);
+    fetchSavedRecipes()
+      .then((enriched) => {
+        if (cancelled) return;
+        setSavedRecipes(enriched);
+        setDinnerIdea(pickDinnerCandidate(enriched));
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error("Failed to load saved recipes:", err);
+        setSavedRecipes([]);
         setDinnerIdea(null);
+      })
+      .finally(() => {
+        if (!cancelled) setSavedLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fetchSavedRecipes]);
+
+  const handleShoppingAdd = useCallback(
+    async (rawInput) => {
+      const normalized = (rawInput || "").trim();
+      if (!normalized) return;
+      // Allow users to paste a list of items, splitting them by newlines or commas
+      const entries = normalized
+        .split(/[\n,]/)
+        .map((entry) => entry.trim())
+        .filter(Boolean);
+      if (!entries.length) return;
+
+      setShoppingAddLoading(true);
+      setShoppingError(null);
+
+      try {
+        if (entries.length === 1) {
+          const row = await createShoppingItem({ name: entries[0] });
+          setShoppingList((prev) =>
+            sortShoppingEntries([row, ...prev])
+          );
+        } else {
+          const inserted = await addShoppingItemsBulk(entries);
+          setShoppingList((prev) =>
+            sortShoppingEntries([...(inserted || []), ...prev])
+          );
+        }
+      } catch (err) {
+        console.error("Failed to add shopping item:", err);
+        setShoppingError(err?.message || "Failed to add shopping item");
+      } finally {
+        setShoppingAddLoading(false);
       }
-      setLoadingDinner(false);
+    },
+    []
+  );
+
+  // Automatically add checked shopping items to the pantry
+  const syncCheckedItemToPantry = useCallback(
+    async (entry) => {
+      if (!entry?.name) return;
+      try {
+        await addPantryItem({
+          name: entry.name,
+          qty: entry.qty ?? "",
+          notes: entry.notes ?? "",
+        });
+      } catch (err) {
+        console.error("Failed to sync pantry item:", err);
+        setShoppingError((prev) => prev ?? "Could not add item to pantry.");
+      }
+    },
+    [setShoppingError]
+  );
+
+  const handleShoppingToggle = useCallback(
+    async (item) => {
+    if (!item?.id) return;
+    const nextChecked = !item.checked;
+    setShoppingList((prev) =>
+      sortShoppingEntries(
+        prev.map((row) =>
+          row.id === item.id ? { ...row, checked: nextChecked } : row
+        )
+      )
+    );
+    try {
+      const updated = await toggleShoppingChecked(item.id, nextChecked);
+      if (updated) {
+        setShoppingList((prev) =>
+          sortShoppingEntries(
+            prev.map((row) =>
+              row.id === updated.id ? { ...row, ...updated } : row
+            )
+          )
+        );
+          if (updated.checked) {
+            await syncCheckedItemToPantry(updated);
+          }
+      }
+    } catch (err) {
+      console.error("Failed to update shopping item:", err);
+      setShoppingError(err?.message || "Failed to update shopping item");
+      setShoppingList((prev) =>
+        sortShoppingEntries(
+          prev.map((row) =>
+            row.id === item.id ? { ...row, checked: item.checked } : row
+          )
+        )
+      );
+    }
+    },
+    [syncCheckedItemToPantry]
+  );
+
+  const handleShoppingRemove = useCallback(
+    async (id) => {
+      if (!id) return;
+      setShoppingError(null);
+      setShoppingList((prev) => prev.filter((row) => row.id !== id));
+      try {
+        await deleteShoppingItem(id);
+      } catch (err) {
+        console.error("Failed to remove shopping item:", err);
+        setShoppingError(err?.message || "Failed to remove shopping item");
+        loadShoppingList();
+      }
+    },
+    [loadShoppingList]
+  );
+
+  const handleClearShopping = useCallback(async () => {
+    if (!shoppingList.length) return;
+    setShoppingClearing(true);
+    setShoppingError(null);
+    try {
+      await clearShopping();
+      setShoppingList([]);
+    } catch (err) {
+      console.error("Failed to clear shopping list:", err);
+      setShoppingError(err?.message || "Failed to clear shopping list");
+      await loadShoppingList();
+    } finally {
+      setShoppingClearing(false);
+    }
+  }, [loadShoppingList, shoppingList.length]);
+
+  async function handleSaveAiRecipe(recipe, index) {
+    if (!recipe) return;
+    const normalizedName = (recipe.name || "").trim();
+    if (!normalizedName) {
+      setAiSaveError("Please name the recipe before saving it.");
+      return;
+    }
+    const lookupName = normalizedName.toLowerCase();
+    if (savedAiNames.has(lookupName)) {
+      return;
+    }
+    const imageUrl = aiImages[index] || null;
+
+    setAiSaveError(null);
+    setSavingAiIndex(index);
+    try {
+      await addSavedAiSnapshot({
+        ...recipe,
+        name: normalizedName,
+        ingredients: Array.isArray(recipe.ingredients) ? recipe.ingredients : [],
+        steps: Array.isArray(recipe.steps) ? recipe.steps : [],
+        image_url: imageUrl,
+      });
+      const enriched = await fetchSavedRecipes();
+      setSavedRecipes(enriched);
+      setDinnerIdea(pickDinnerCandidate(enriched));
+    } catch (err) {
+      console.error("Failed to save AI recipe:", err);
+      setAiSaveError(err?.message || "Failed to save recipe");
+    } finally {
+      setSavingAiIndex(null);
+    }
+  }
+
+  const outstandingShopping = useMemo(
+    () => shoppingList.filter((item) => !item.checked),
+    [shoppingList]
+  );
+  const completedShopping = useMemo(
+    () => shoppingList.filter((item) => !!item.checked),
+    [shoppingList]
+  );
+  const dinnerMeta = dinnerIdea
+    ? [
+        dinnerIdea.minutes ? `${dinnerIdea.minutes} min` : null,
+        typeof dinnerIdea.rating === "number" ? `★ ${dinnerIdea.rating}` : null,
+        dinnerIdea.cuisine || null,
+        dinnerIdea.diet || null,
+      ].filter(Boolean)
+    : [];
+  const dinnerDescription =
+    dinnerIdea && typeof dinnerIdea.description === "string" && dinnerIdea.description.trim()
+      ? dinnerIdea.description
+      : dinnerIdea
+      ? "This saved recipe doesn't have a description yet, but it's ready to cook!"
+      : "";
+  const dinnerIngredientsPreview =
+    dinnerIdea && Array.isArray(dinnerIdea.ingredients)
+      ? dinnerIdea.ingredients
+          .map(extractIngredientName)
+          .filter(Boolean)
+          .slice(0, 5)
+      : [];
+  const dinnerStepsSource = dinnerIdea ? getRecipeSteps(dinnerIdea) : [];
+  const dinnerStepsPreview = formatStepEntries(dinnerStepsSource).slice(0, 3);
+  const savedAiNames = useMemo(() => {
+    const nameSet = new Set();
+    savedRecipes.forEach((recipe) => {
+      if (recipe?.name && recipe?.is_ai_recipe) {
+        nameSet.add(recipe.name.toLowerCase());
+      }
     });
-  }
+    return nameSet;
+  }, [savedRecipes]);
 
-  // ---------------- Handlers ----------------
-  function toggleDietary(key) {
-    setDietary(d => ({ ...d, [key]: !d[key] }));
-  }
-
-  function addFavoriteMeal({ name, imageUrl }) {
-    if (!name.trim()) return;
-    if (favMeals.some(m => m.name.toLowerCase() === name.toLowerCase())) return;
-    const id = name.toLowerCase().trim().replace(/\s+/g, "-") + "-" + Math.random().toString(36).slice(2,7);
-    setFavMeals(prev => [{ id, name: name.trim(), imageUrl: (imageUrl || "").trim() }, ...prev]);
-  }
-
-  function removeFavoriteMeal(id) {
-    setFavMeals(prev => prev.filter(m => m.id !== id));
-  }
-
-  function toggleCuisine(c) {
-    setFavCuisines(prev => prev.includes(c) ? prev.filter(x => x !== c) : [...prev, c]);
-  }
-
-  function addShoppingItem(item) {
-    if (!item.trim()) return;
-    setShoppingList(prev => [...prev, { id: Math.random().toString(36).slice(2,7), name: item.trim(), done: false }]);
-  }
-
-  function toggleShoppingItem(id) {
-    setShoppingList(prev => prev.map(i => i.id === id ? { ...i, done: !i.done } : i));
-  }
-
-  function clearShoppingList() {
-    setShoppingList([]);
-  }
-
-  // ---------------- UI ----------------
   return (
     <div className="home-shell">
       <header className="home-header">
         <div className="home-title">
           <span className="logo">🍽️</span>
-          <h1>Welcome</h1>
+          <div>
+            <h1>Welcome back</h1>
+            <p className="subtitle">Here's your personalized kitchen dashboard.</p>
+          </div>
         </div>
       </header>
 
-      {/* What's for Dinner */}
       <section className="panel">
         <div className="panel-head">
           <h2>What's for Dinner</h2>
         </div>
         <div className="dinner-section">
-          <img src="/meal_image.jpg" alt="Tonight's Dinner" className="dinner-image"/>
-          {loadingDinner ? (
-            <p>Generating dinner idea...</p>
+          {savedLoading ? (
+            <p>Loading your saved recipes…</p>
+          ) : savedRecipes.length === 0 ? (
+            <div>
+            <p>You haven't saved any recipes yet. Head to Search to save a few favorites.</p>
+              <Link className="btn primary" to="/saved">View Saved Recipes</Link>
+            </div>
           ) : dinnerIdea ? (
-            <>
-              <p className="dinner-caption">{dinnerIdea.name}</p>
-              {dinnerIdea.description && <p>{dinnerIdea.description}</p>}
-              {dinnerIdea.ingredients && <p><strong>Ingredients:</strong> {dinnerIdea.ingredients.join(", ")}</p>}
-              {dinnerIdea.steps && <p><strong>Steps:</strong> {dinnerIdea.steps.join(". ")}</p>}
-            </>
+            <div className="dinner-layout">
+              {dinnerIdea.image_url && (
+                <div className="dinner-media">
+                  <img
+                    src={dinnerIdea.image_url}
+                    alt={dinnerIdea.name || "Saved recipe"}
+                    className="dinner-image"
+                  />
+                </div>
+              )}
+              <div className="dinner-text">
+                <p className="dinner-eyebrow">Chef's pick</p>
+                <h3 className="dinner-caption">{dinnerIdea.name}</h3>
+                <p className="dinner-description">{dinnerDescription}</p>
+                {dinnerMeta.length > 0 && (
+                  <div className="dinner-meta">
+                    {dinnerMeta.map((pill) => (
+                      <span key={pill} className="meta-pill">
+                        {pill}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {dinnerIngredientsPreview.length > 0 && (
+                  <div className="dinner-block">
+                    <strong>Quick ingredients</strong>
+                    <ul className="inline-list">
+                      {dinnerIngredientsPreview.map((ing, idx) => (
+                        <li key={idx}>{ing}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {dinnerStepsPreview.length > 0 && (
+                  <div className="dinner-block">
+                    <strong>Steps</strong>
+                    <ol className="dinner-steps">
+                      {dinnerStepsPreview.map((step) => {
+                        const key = `${step.number}-${step.text.slice(0, 24)}`;
+                        return (
+                          <li key={key}>
+                            <div className="dinner-step-label">
+                              Step {step.number}
+                              {step.title ? ` · ${step.title}` : ""}
+                            </div>
+                            <div className="dinner-step-text">{step.text}</div>
+                          </li>
+                        );
+                      })}
+                    </ol>
+                  </div>
+                )}
+                <Link className="btn primary" to="/saved">
+                  Go to Saved Recipes
+                </Link>
+              </div>
+            </div>
           ) : (
-            <p>Click the button below to generate tonight’s dinner idea!</p>
+            <div>
+              <p>No saved recipes available right now.</p>
+              <Link className="btn primary" to="/saved">Go to Saved Recipes</Link>
+            </div>
           )}
-          <button className="btn primary" onClick={() => generateDinner()}>
-            {dinnerIdea ? "Regenerate Dinner Idea" : "Generate Dinner Idea"}
-          </button>
         </div>
       </section>
 
-      {/* AI Recipes */}
       <section className="panel">
         <div className="panel-head">
-          <h2>AI-Generated Recipes</h2>
+          <h2>Recipe Inspiration</h2>
         </div>
         {loadingAi ? (
           <p>Generating AI recipes...</p>
         ) : (
           <>
-            <div className="card-grid">
-              {aiRecipes.map((r, i) => (
-                <article className="card meal" key={i}>
-                  <div className="card-body">
-                    <h3 className="card-title">{r.name}</h3>
-                    <p>{r.description}</p>
-                    {r.ingredients && <p><strong>Ingredients:</strong> {r.ingredients.join(", ")}</p>}
-                    {r.steps && <p><strong>Steps:</strong> {r.steps.join(". ")}</p>}
-                  </div>
-                </article>
-              ))}
-            </div>
-            <button
-              className="btn primary"
-              onClick={() => {
-                setLoadingAi(true);
-                fetchAiRecipes(generateDefaultPrompt(), systemPrompt).then(text => {
-                  try {
-                    const recipes = JSON.parse(text);
-                    setAiRecipes(recipes);
-                  } catch {
-                    setAiRecipes([]);
-                  }
-                  setLoadingAi(false);
-                });
-              }}
-            >
-              Regenerate AI Recipes
-            </button>
+            {aiImagesLoading && aiRecipes.length > 0 && (
+              <p>Generating fresh images…</p>
+            )}
+            {aiSaveError && <p className="inline-error">{aiSaveError}</p>}
+            {aiRecipes.length === 0 ? (
+              <p>No AI recipes yet.</p>
+            ) : (
+              <div className="ai-card-grid">
+                {aiRecipes.map((r, i) => {
+                  const isExpanded = expandedAiIndex === i;
+                  const imgUrl = aiImages[i] || null;
+                  const normalizedName = (r.name || "").toLowerCase();
+                  const alreadySaved = !!(
+                    normalizedName && savedAiNames.has(normalizedName)
+                  );
+                  const saving = savingAiIndex === i;
+                  const disableSave = !r.name || alreadySaved || saving;
+                  return (
+                    <article
+                      className={`ai-card ${isExpanded ? "expanded" : ""}`}
+                      key={i}
+                      onClick={() => setExpandedAiIndex(isExpanded ? null : i)}
+                    >
+                      {imgUrl && (
+                        <div className="ai-card-media">
+                          <img src={imgUrl} alt={r.name || `Recipe ${i + 1}`} />
+                        </div>
+                      )}
+                      <div className="ai-card-body">
+                        <h3>{r.name || `Recipe ${i + 1}`}</h3>
+                        <p className="ai-card-hint">
+                          {isExpanded ? "Click to collapse" : "Click to expand"}
+                        </p>
+                        {!isExpanded && r.description && (
+                          <p className="ai-card-summary">
+                            {truncateText(r.description, 140)}
+                          </p>
+                        )}
+                        <div className="ai-card-chips">
+                          {Array.isArray(r.ingredients) && r.ingredients.length > 0 && (
+                            <span>{r.ingredients.length} ingredients</span>
+                          )}
+                          {Array.isArray(r.steps) && r.steps.length > 0 && (
+                            <span>{r.steps.length} steps</span>
+                          )}
+                        </div>
+                        <div className="ai-card-actions">
+                          <button
+                            type="button"
+                            className="btn secondary"
+                            disabled={disableSave}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (!disableSave) {
+                                handleSaveAiRecipe(r, i);
+                              }
+                            }}
+                          >
+                            {alreadySaved
+                              ? "Saved"
+                              : saving
+                              ? "Saving…"
+                              : "Save Recipe"}
+                          </button>
+                          {alreadySaved && (
+                            <span className="ai-card-saved">Recipe Saved</span>
+                          )}
+                        </div>
+                        {isExpanded && (
+                          <div className="ai-card-details">
+                            {r.description && <p>{r.description}</p>}
+                            {Array.isArray(r.ingredients) && r.ingredients.length > 0 && (
+                              <div>
+                                <strong>Ingredients:</strong>
+                                <ul>
+                                  {r.ingredients.map((ing, idx) => (
+                                    <li key={idx}>
+                                      {typeof ing === "string" ? ing : ing.ingredient || ""}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {Array.isArray(r.steps) && r.steps.length > 0 && (
+                              <div>
+                                <strong>Steps:</strong>
+                                <ol>
+                                  {r.steps.map((step, idx) => (
+                                    <li key={idx}>{step}</li>
+                                  ))}
+                                </ol>
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
           </>
         )}
       </section>
 
-      {/* Profile Summary */}
       <section className="panel">
         <div className="panel-head"><h2>Profile Summary</h2></div>
-        <ul className="profile-list">
-          <li>Dishes Cooked: <strong>{favMeals.length}</strong></li>
-          <li>Account Level: <strong>Beginner</strong></li>
-          <li>Daily Challenge: <em>Make an Italian dish</em></li>
+        <ul className="profile-list profile-stats">
+          <li>
+            <span className="label">Saved Recipes</span>
+            <span className="value">{savedRecipes.length}</span>
+          </li>
+          <li>
+            <span className="label">Pending Shopping Items</span>
+            <span className="value">{outstandingShopping.length}</span>
+          </li>
+          <li>
+            <span className="label">Daily Challenge</span>
+            <span className="value highlight">Make an Italian dish</span>
+          </li>
         </ul>
       </section>
 
-      {/* Dietary Restrictions */}
-      <section className="panel">
-        <div className="panel-head"><h2>Dietary Restrictions</h2></div>
-        <div className="dietary-grid">
-          {Object.keys(DEFAULT_DIETARY).map(key => (
-            <label key={key} className={`diet-chip ${dietary[key] ? "on" : ""}`}>
-              <input type="checkbox" checked={!!dietary[key]} onChange={() => toggleDietary(key)} />
-              <span className="name">{key.replace(/([A-Z])/g, " $1").replace(/^./, s => s.toUpperCase())}</span>
-            </label>
-          ))}
+      <section className="panel shopping-panel">
+        <div className="panel-head">
+          <h2>Shopping List</h2>
+          {shoppingList.length > 0 && (
+            <button
+              type="button"
+              className="btn ghost"
+              onClick={handleClearShopping}
+              disabled={shoppingClearing}
+            >
+              {shoppingClearing ? "Clearing…" : "Clear all"}
+            </button>
+          )}
         </div>
-      </section>
 
-      {/* Favorite Meals */}
-      <section className="panel">
-        <div className="panel-head"><h2>Favorite Meals</h2></div>
-        <AddFavoriteMeal onAdd={addFavoriteMeal} />
-        {favMeals.length === 0 ? (
-          <div className="empty"><p>No favorites yet. Add some above!</p></div>
+        <div className="shopping-list-header">
+          <div>
+            <p className="shopping-eyebrow">Next grocery run</p>
+            <p className="shopping-headline">
+              {shoppingLoading
+                ? "Syncing shopping list…"
+                : outstandingShopping.length
+                ? `${outstandingShopping.length} item${
+                    outstandingShopping.length === 1 ? "" : "s"
+                  } left to buy`
+                : "You're fully stocked"}
+            </p>
+          </div>
+          <div className="shopping-pills">
+            <span className="shopping-pill pending">
+              {outstandingShopping.length} to buy
+            </span>
+            <span className="shopping-pill done">
+              {completedShopping.length} checked
+            </span>
+          </div>
+        </div>
+
+        <AddShoppingItem
+          onAdd={handleShoppingAdd}
+          isAdding={shoppingAddLoading}
+        />
+
+        {shoppingError && <p className="inline-error">{shoppingError}</p>}
+
+        {shoppingLoading ? (
+          <div className="empty">
+            <p>Loading your shopping list…</p>
+          </div>
+        ) : shoppingList.length === 0 ? (
+          <div className="empty">
+            <p>Your shopping list is empty. Add ingredients above!</p>
+          </div>
         ) : (
-          <div className="card-grid">
-            {favMeals.map(m => (
-              <article className="card meal" key={m.id}>
-                <div className="card-media">
-                  {m.imageUrl ? <img src={m.imageUrl} alt={m.name}/> : <div className="placeholder">⭐</div>}
-                </div>
-                <div className="card-body">
-                  <h3 className="card-title">{m.name}</h3>
-                </div>
-                <div className="card-actions">
-                  <button className="btn danger" onClick={() => removeFavoriteMeal(m.id)}>Remove</button>
-                </div>
-              </article>
-            ))}
+          <div className="shopping-list-grid">
+            <ShoppingColumn
+              title="Need to buy"
+              items={outstandingShopping}
+              emptyText="Every ingredient is accounted for."
+              onToggle={handleShoppingToggle}
+              onRemove={handleShoppingRemove}
+            />
+            <ShoppingColumn
+              title="Checked off"
+              items={completedShopping}
+              emptyText="Nothing checked off yet."
+              onToggle={handleShoppingToggle}
+              onRemove={handleShoppingRemove}
+            />
           </div>
         )}
       </section>
+    </div>
+  );
+}
 
-      {/* Favorite Cuisines */}
-      <section className="panel">
-        <div className="panel-head"><h2>Favorite Cuisines</h2></div>
-        <div className="cuisine-cloud">
-          {ALL_CUISINES.map(c => (
-            <button key={c} className={`chip ${favCuisines.includes(c) ? "selected" : ""}`} onClick={() => toggleCuisine(c)}>
-              {c[0].toUpperCase() + c.slice(1)}
-            </button>
+function AddShoppingItem({ onAdd, isAdding }) {
+  const [value, setValue] = useState("");
+
+  async function submit() {
+    const text = value.trim();
+    if (!text || isAdding) return;
+    await onAdd(text);
+    setValue("");
+  }
+
+  return (
+    <div className="add-fav-row">
+      <input
+        type="text"
+        value={value}
+        placeholder="Add item or paste comma-separated entries"
+        onChange={(event) => setValue(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") {
+            event.preventDefault();
+            submit();
+          }
+        }}
+      />
+      <button
+        className="btn primary"
+        type="button"
+        onClick={submit}
+        disabled={isAdding || !value.trim()}
+      >
+        {isAdding ? "Adding…" : "Add"}
+      </button>
+    </div>
+  );
+}
+
+function ShoppingColumn({
+  title,
+  items = [],
+  emptyText,
+  onToggle,
+  onRemove,
+}) {
+  return (
+    <div className="shopping-column">
+      <div className="shopping-column-head">
+        <h3>{title}</h3>
+        <span className="shopping-count-pill">{items.length}</span>
+      </div>
+      {items.length === 0 ? (
+        <p className="shopping-column-empty">{emptyText}</p>
+      ) : (
+        <div className="shopping-items">
+          {items.map((item) => (
+            <ShoppingListItem
+              key={item.id}
+              item={item}
+              onToggle={onToggle}
+              onRemove={onRemove}
+            />
           ))}
         </div>
-      </section>
+      )}
+    </div>
+  );
+}
 
-      {/* Shopping List */}
-      <section className="panel">
-        <div className="panel-head">
-          <h2>Shopping List</h2>
-          {shoppingList.length > 0 && <button className="btn ghost" onClick={clearShoppingList}>Clear</button>}
+function ShoppingListItem({ item, onToggle, onRemove }) {
+  if (!item) return null;
+  const detail = [item.qty, item.notes]
+    .map((value) => (value ? String(value).trim() : ""))
+    .filter(Boolean)
+    .join(" • ");
+
+  return (
+    <div className={`shopping-item ${item.checked ? "done" : ""}`}>
+      <label className="shopping-item-main">
+        <input
+          type="checkbox"
+          checked={!!item.checked}
+          onChange={() => onToggle(item)}
+        />
+        <div className="shopping-item-text">
+          <span className="shopping-item-name">{item.name}</span>
+          {detail && <span className="shopping-item-detail">{detail}</span>}
         </div>
-        <AddShoppingItem onAdd={addShoppingItem} />
-        {shoppingList.length === 0 ? (
-          <div className="empty"><p>Your shopping list is empty. Add ingredients above!</p></div>
-        ) : (
-          <ul className="shopping-list">
-            {shoppingList.map(i => (
-              <li key={i.id} className={i.done ? "done" : ""} onClick={() => toggleShoppingItem(i.id)}>
-                {i.name}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-    </div>
-  );
-}
-
-// ---------------- Components ----------------
-function AddFavoriteMeal({ onAdd }) {
-  const nameRef = useRef(null);
-  const imgRef = useRef(null);
-
-  function add() {
-    onAdd({ name: nameRef.current?.value || "", imageUrl: imgRef.current?.value || "" });
-    if (nameRef.current) nameRef.current.value = "";
-    if (imgRef.current) imgRef.current.value = "";
-    nameRef.current?.focus();
-  }
-
-  return (
-    <div className="add-fav-row">
-      <input ref={nameRef} type="text" placeholder="Meal name (e.g., Chicken Tikka)" />
-      <input ref={imgRef} type="url" placeholder="Image URL (optional)" />
-      <button className="btn primary" onClick={add}>Add</button>
-    </div>
-  );
-}
-
-function AddShoppingItem({ onAdd }) {
-  const itemRef = useRef(null);
-
-  function add() {
-    onAdd(itemRef.current?.value || "");
-    if (itemRef.current) itemRef.current.value = "";
-    itemRef.current?.focus();
-  }
-
-  return (
-    <div className="add-fav-row">
-      <input ref={itemRef} type="text" placeholder="Add item (e.g., Tomatoes)" />
-      <button className="btn primary" onClick={add}>Add</button>
+      </label>
+      <button
+        type="button"
+        className="shopping-remove-btn"
+        onClick={() => onRemove(item.id)}
+      >
+        Remove
+      </button>
     </div>
   );
 }

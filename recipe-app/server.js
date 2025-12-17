@@ -1,34 +1,42 @@
-// server.js
 const express = require('express');
 const sqlite = require('better-sqlite3');
 const path = require('path');
 require('dotenv').config();
 
-// LangChain / OpenAI
 const { ChatOpenAI } = require('@langchain/openai');
 const { SystemMessage, HumanMessage } = require('@langchain/core/messages');
-
-// Gemeni 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { createClient } = require("@supabase/supabase-js");
 
+// API keys are accessed from environment variables for security.
+const openAiApiKey = process.env.OPENAI_API_KEY;
+const geminiApiKey = process.env.GEMINI_API_KEY;
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+if (!openAiApiKey) {
+  console.warn("OPENAI_API_KEY is not set. OpenAI endpoints will fail.");
+}
 
+if (!geminiApiKey) {
+  console.warn("GEMINI_API_KEY is not set. Gemini image generation will fail.");
+}
+
+const genAI = geminiApiKey ? new GoogleGenerativeAI(geminiApiKey) : null;
+
+// Initialize Supabase for storing user data and saved recipes
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-
 const app = express();
 
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'recipes.db');
+// Open the database in read-only mode to prevent accidental writes during search
 const db = sqlite(DB_PATH, { readonly: true });
 
 app.use(express.json());
 
-// permissive CORS for local dev
+// permissive CORS for local dev so frontend can talk to backend easily
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -37,10 +45,11 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------------- AI Recipe Endpoint ----------------
+// Endpoints
+
 const model = new ChatOpenAI({
   model: 'gpt-4.1',
-  apiKey: "", 
+  apiKey: openAiApiKey,
 });
 
 app.post('/api/ai-recipes', async (req, res) => {
@@ -48,9 +57,10 @@ app.post('/api/ai-recipes', async (req, res) => {
     const { prompt, systemPrompt } = req.body;
     if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
 
+    // Set a system message to define the assistant's persona and output format
     const systemMsg = new SystemMessage(
       systemPrompt ||
-        'You are a helpful assistant that creates recipes based on dietary preferences and ingredients. ' +
+        'You are a helpful assistant that creates recipes based on dietary preferences, description and ingredients. ' +
         'Return a JSON array of recipes with fields: name, description, ingredients (array of strings), steps (array of strings).'
     );
     const messages = [systemMsg, new HumanMessage(prompt)];
@@ -62,7 +72,6 @@ app.post('/api/ai-recipes', async (req, res) => {
     res.status(500).json({ error: String(error?.message || error) });
   }
 });
-
 
 app.post('/api/ai-search', async (req, res) => {
   try {
@@ -76,7 +85,7 @@ app.post('/api/ai-search', async (req, res) => {
       prompt
     } = req.body || {};
 
-    // Build userPrompt if not provided
+    // Construct the user prompt based on available filters if a raw prompt isn't provided
     const userPrompt = typeof prompt === 'string' && prompt
       ? prompt
       : (() => {
@@ -132,7 +141,6 @@ EXAMPLE INGREDIENT ENTRY:
 
     const systemMsg = new SystemMessage(systemPrompt || defaultSystemPrompt);
 
-    // Redundantly include pantry in human message to keep it fresh in context
     const pantryLine = pantry?.length
       ? `Pantry items available for substitution: ${pantry.join(', ')}`
       : 'Pantry items available for substitution: (none)';
@@ -148,32 +156,48 @@ EXAMPLE INGREDIENT ENTRY:
   }
 });
 
-
-// ---------------- Favorite Recipe Image Generation Endpoint ----------------
-app.post("/api/favorite-image", async (req, res) => {
+app.post("/api/saved-image", async (req, res) => {
   try {
-    const { favorite_id, name, ingredients } = req.body || {};
-    if (!favorite_id) {
-      return res.status(400).json({ error: "favorite_id required" });
+    const { saved_id, name, ingredients } = req.body || {};
+    if (!saved_id) {
+      return res.status(400).json({ error: "saved_id required" });
     }
 
     const image = await generateRecipeImage({ name, ingredients });
-    const url = await uploadFavoriteImageToSupabase({
-      favoriteId: favorite_id,
+    const url = await uploadSavedImageToSupabase({
+      savedId: saved_id,
       image,
     });
 
     res.json({ image_url: url });
   } catch (err) {
-    console.error("Error generating favorite image:", err);
+    console.error("Error generating saved recipe image:", err);
     res.status(500).json({ error: String(err?.message || err) });
   }
 });
 
+app.post("/api/ai-image", async (req, res) => {
+  try {
+    const { name, ingredients } = req.body || {};
+    if (!name && !Array.isArray(ingredients)) {
+      return res.status(400).json({ error: "name or ingredients required" });
+    }
 
-// ---------------- Favorite Recipe Image Generation helper functions ----------------
+    const image = await generateRecipeImage({ name, ingredients });
+    const mime = image?.mimeType || "image/jpeg";
+    const dataUrl = `data:${mime};base64,${image?.data || ""}`;
+    res.json({ image_url: dataUrl });
+  } catch (err) {
+    console.error("Error generating AI recipe image:", err);
+    res.status(500).json({ error: String(err?.message || err) });
+  }
+});
+
 async function generateRecipeImage({ name, ingredients }) {
-  // Build a nice prompt from name + ingredients
+  if (!genAI) {
+    throw new Error("GEMINI_API_KEY is not configured.");
+  }
+  // Format the ingredient list to be more readable for the image generator
   const ingredientList = Array.isArray(ingredients)
     ? ingredients
         .map((x) => {
@@ -199,34 +223,55 @@ async function generateRecipeImage({ name, ingredients }) {
     - No text overlays or watermarks.
     `;
 
-  // Use a Gemini model that supports image output
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-image", 
-    generationConfig: {
-      responseModalities: ["IMAGE"], // only image back
-    },
-  });
+  const MAX_RETRIES = 3;
+  
+  // Retry mechanism handles potential failures from the image API
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: "gemini-2.5-flash-image", 
+        generationConfig: {
+          responseModalities: ["IMAGE"], // only image back, no text
+        },
+      });
 
-  const response = await model.generateContent(prompt);
-  console.log("Gemini favorite image response:", response.response);
-  const parts =
-    response?.response?.candidates?.[0]?.content?.parts || []; // adjust this if getting weird errors so it fits the response shape
+      const response = await model.generateContent(prompt);
+      console.log(`Gemini image response (attempt ${attempt + 1}/${MAX_RETRIES}):`, response.response);
+      const parts =
+        response?.response?.candidates?.[0]?.content?.parts || [];
 
-  const imagePart = parts.find((p) => p.inlineData);
+      const imagePart = parts.find((p) => p.inlineData);
 
-  if (!imagePart || !imagePart.inlineData?.data) {
-    throw new Error("No image data returned from Gemini");
+      if (!imagePart || !imagePart.inlineData?.data) {
+        if (attempt < MAX_RETRIES - 1) {
+          console.log(`No image data returned, retrying... (attempt ${attempt + 1}/${MAX_RETRIES})`);
+          // Wait a bit before retrying 
+          await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+          continue;
+        }
+        throw new Error("No image data returned from Gemini after 3 attempts");
+      }
+
+      
+      return imagePart.inlineData; 
+    } catch (error) {
+      if (error.message.includes("No image data") && attempt < MAX_RETRIES - 1) {
+        console.log(`Image generation failed, retrying... (attempt ${attempt + 1}/${MAX_RETRIES}):`, error.message);
+        await new Promise(resolve => setTimeout(resolve, 1000 * (attempt + 1)));
+        continue;
+      }
+      throw error;
+    }
   }
-
-  // inlineData: { mimeType, data (base64) }
-  return imagePart.inlineData; // { mimeType, data }
+  
+  throw new Error("Failed to generate image after all retry attempts");
 }
 
 
-async function uploadFavoriteImageToSupabase({ favoriteId, image }) {
+async function uploadSavedImageToSupabase({ savedId, image }) {
   const buffer = Buffer.from(image.data, "base64");
   const ext = image.mimeType === "image/png" ? "png" : "jpg";
-  const path = `favorites/${favoriteId}.${ext}`;
+  const path = `saved/${savedId}.${ext}`;
 
   const { error: uploadError } = await supabase.storage
     .from("recipe-images")
@@ -241,11 +286,11 @@ async function uploadFavoriteImageToSupabase({ favoriteId, image }) {
     data: { publicUrl },
   } = supabase.storage.from("recipe-images").getPublicUrl(path);
 
-  // update the favorites row
+  // Update the favorites table with the new image URL
   const { error: updateError } = await supabase
     .from("favorites")
     .update({ image_url: publicUrl })
-    .eq("id", favoriteId);
+    .eq("id", savedId);
 
   if (updateError) throw updateError;
 
@@ -257,24 +302,14 @@ async function uploadFavoriteImageToSupabase({ favoriteId, image }) {
 
 
 // ---------------- Existing endpoints ----------------
-app.get('/api/health', (req, res) => {
-  try {
-    const row = db.prepare('SELECT 1 AS ok').get();
-    res.json({ ok: !!row, db: DB_PATH });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: String(e.message || e) });
-  }
-});
 
-/** Build FTS WHERE clause */
+
 function buildFtsWhere(q) {
   if (!q) return { where: '1=1', params: {} };
   const words = q.trim().split(/\s+/).slice(0, 6).map(w => w.replace(/"/g, ''));
   const matchExpr = words.length ? words.map(w => `"${w}"`).join(' NEAR ') : '';
   return { where: 'recipes_fts MATCH :match', params: { match: matchExpr } };
 }
-
-/** Sort clause (use computed "score" for relevance) */
 function orderClause(sort) {
   switch ((sort || '').toLowerCase()) {
     case 'rating':       return 'ORDER BY r.rating DESC';

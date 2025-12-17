@@ -1,9 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import "../css/pantry.css";
 import { getPantry, addPantryItem, updatePantryItem, removePantryItem } from "../data/pantry";
 
 const CATEGORIES = ["all", "produce", "dairy", "protein", "grain", "condiment", "snack","drink", "other"];
 
+// Amazingly, Tyler did actually write this by hand.
 const EMOJI_MAP = {
   milk: "🥛",
   egg: "🥚",
@@ -51,7 +51,7 @@ const EMOJI_MAP = {
   broccoli: "🥦",
   eggplant: "🍆",
   cucumber: "🥒",
-  pepperoni: "🍕",
+  pizza: "🍕",
   bagel: "🥯",
   waffles: "🧇",
   bacon: "🥓",
@@ -76,8 +76,10 @@ const EMOJI_MAP = {
   pop: "🥤",
   soda: "🥤",
   cereal: "🥣",
+  popcorn: "🍿",
 };
 
+// Simple keyword matching system to automatically categorize items
 function inferCategory(name) {
   const n = name.toLowerCase();
   if (/(apple|banana|lettuce|spinach|tomato|onion|garlic|carrot|potato|peas|broccoli|eggplant|cucumber|red pepper|green pepper)/.test(n)) return "produce";
@@ -97,6 +99,7 @@ function emojiFor(name) {
   return match ? EMOJI_MAP[match] : "🧺";
 }
 
+// Parse natural language inputs like "2 eggs" or "1 cup milk"
 function parseQuickAdd(input) {
   const raw = input.trim();
   if (!raw) return null;
@@ -132,18 +135,16 @@ export default function PantryPro({ placeholder = "No items in pantry yet", onCh
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [sort, setSort] = useState("recent");
-  const [busyId, setBusyId] = useState(null); // for disabling buttons during network calls
-  const [items, setItems] = useState([]);     // {id, name, qty, created_at, [unit,imgUrl]} (unit/imgUrl client-only)
+  const [busyId, setBusyId] = useState(null);
+  const [items, setItems] = useState([]);
 
-  // Initial load from Supabase
   useEffect(() => {
     (async () => {
       try {
         const rows = await getPantry();
-        // add derived category; keep any client-only fields undefined
         setItems(rows.map(r => ({
           ...r,
-          qty: r.qty ?? 1, // qty column is text in SQL; treat null as 1
+          qty: r.qty ?? 1,
           category: inferCategory(r.name),
         })));
       } catch (e) {
@@ -152,7 +153,6 @@ export default function PantryPro({ placeholder = "No items in pantry yet", onCh
     })();
   }, []);
 
-  // Notify parent if needed
   useEffect(() => { onChange(items); }, [items, onChange]);
 
   async function addItem(raw) {
@@ -162,7 +162,7 @@ export default function PantryPro({ placeholder = "No items in pantry yet", onCh
     const name = parsed.name.trim();
     if (!name) return;
 
-    // prevent obvious local dupes (case-insensitive)
+    // Prevent duplicates by checking if the item already exists (case-insensitive)
     if (items.some(it => it.name.toLowerCase() === name.toLowerCase())) {
       inputRef.current?.focus();
       return;
@@ -170,7 +170,6 @@ export default function PantryPro({ placeholder = "No items in pantry yet", onCh
 
     try {
       const created = await addPantryItem({ name, qty: parsed.qty ?? 1 });
-      // keep unit only in client state (not persisted unless you add a unit column)
       const withDerived = {
         ...created,
         qty: created.qty ?? (parsed.qty ?? 1),
@@ -204,14 +203,12 @@ export default function PantryPro({ placeholder = "No items in pantry yet", onCh
     if (!it) return;
     const nextQty = Math.max(0, Number(it.qty ?? 1) + delta);
 
-    // optimistic update
     setItems(prev => prev.map(x => x.id === id ? { ...x, qty: nextQty } : x));
     try {
       setBusyId(id);
       await updatePantryItem(id, { qty: nextQty });
     } catch (e) {
       console.error("Update qty failed:", e);
-      // rollback
       setItems(prev => prev.map(x => x.id === id ? { ...x, qty: it.qty } : x));
       alert("Couldn't update quantity.");
     } finally {
@@ -222,7 +219,6 @@ export default function PantryPro({ placeholder = "No items in pantry yet", onCh
   function setCustomImg(id) {
     const url = prompt("Paste an image URL for this item (https://...)")?.trim();
     if (!url) return;
-    // client-only (not persisted) unless you add an img_url column
     setItems(prev => prev.map(it => it.id === id ? { ...it, imgUrl: url } : it));
   }
 
@@ -237,7 +233,6 @@ export default function PantryPro({ placeholder = "No items in pantry yet", onCh
 
     if (sort === "az") list.sort((a, b) => a.name.localeCompare(b.name));
     else if (sort === "za") list.sort((a, b) => b.name.localeCompare(a.name));
-    // "recent" = default order from initial fetch (created_at desc) and local inserts
     return list;
   }, [items, search, category, sort]);
 
@@ -327,6 +322,7 @@ export default function PantryPro({ placeholder = "No items in pantry yet", onCh
   );
 }
 
+// This SVG shows a friendly empty state.
 function IllustrationEmpty() {
   return (
     <svg width="120" height="80" viewBox="0 0 120 80" role="img" aria-label="Empty pantry">
@@ -344,5 +340,3 @@ function IllustrationEmpty() {
     </svg>
   );
 }
-
-
